@@ -1982,8 +1982,12 @@ function donneesExportables() {
   /* Les comptes adultes et les appareils, SANS leurs identifiants techniques. */
   sortie.comptes = (Store.comptesFamille || []).map((c) =>
     ({ adresse: c.adresse, membre: c.membre, admin: !!c.admin, ajouteLe: c.ajouteLe }));
-  sortie.appareils = Object.keys(etat.appareilsInfos || {}).map((u) =>
-    Object.assign({ membre: (etat.appareils || {})[u] || null }, etat.appareilsInfos[u]));
+  /* TOUS les appareils du registre, y compris ceux ajoutes avant la 0.50 et
+     qui n'ont donc pas d'informations : les oublier rendrait l'export
+     incomplet, precisement sur les plus anciens. */
+  sortie.appareils = Object.keys(etat.appareils || {}).map((u) =>
+    Object.assign({ membre: etat.appareils[u], type: "inconnu (ajouté avant la version 0.50)" },
+      (etat.appareilsInfos || {})[u] || {}));
   sortie.etatsDesTaches = etat.etats || {};
   sortie.journalDesPoints = etat.journal || [];
   return propre(sortie);
