@@ -1708,7 +1708,7 @@ const Connexion = {
     /* Abandonner : le lien est retire de l'adresse, sinon il reviendrait au
        prochain rechargement. */
     if (etape === "confirmerEmail" && retour) retour.onclick = () => {
-      history.replaceState(null, "", location.pathname);
+      history.replaceState(null, "", adresseNette());
       Store.lienCompte = false;
       Store.erreurEmail = "";
       this.aller("accueil");

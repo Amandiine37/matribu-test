@@ -483,6 +483,23 @@ function migrerUidsVersAppareils(d) {
   return change;
 }
 
+/* --- Mode EMULATEUR : tests automatiques, sur ce PC seulement ---
+   Actif UNIQUEMENT si la page est servie par localhost ET que l'adresse porte
+   « ?emulateur=1 ». L'application parle alors au faux Firebase lance depuis
+   le dossier famille-tests (projet « demo-matribu ») : un projet demo-
+   n'existe pas chez Google, aucune requete ne peut atteindre la vraie base.
+   Sur les sites publies, EMULATEUR vaut toujours false. */
+const EMULATEUR = (location.hostname === "localhost" || location.hostname === "127.0.0.1")
+  && new URLSearchParams(location.search).has("emulateur");
+const CONFIG_EMULATEUR = {
+  apiKey: "demo-cle", authDomain: "demo-matribu.firebaseapp.com",
+  projectId: "demo-matribu", appId: "demo-matribu"
+};
+function configFirebase() { return EMULATEUR ? CONFIG_EMULATEUR : window.CONFIG_FIREBASE; }
+/* L'adresse de la page sans ses parametres (lien magique, invitation). En
+   mode emulateur on garde ce mode, sinon un rechargement en sortirait. */
+function adresseNette() { return location.pathname + (EMULATEUR ? "?emulateur=1" : ""); }
+
 /* Termine un lien magique : rattache l'appareil, puis ouvre la famille sur
    l'ecran des profils — le code a 4 chiffres reste demande. */
 async function terminerLienCompte(adresse) {
@@ -496,7 +513,7 @@ async function terminerLienCompte(adresse) {
   }
   /* Le lien ne sert qu'une fois : on le retire de l'adresse, sinon un
      rechargement le representerait et echouerait. */
-  history.replaceState(null, "", location.pathname);
+  history.replaceState(null, "", adresseNette());
   Store.lienCompte = false;
   Store.erreurEmail = "";
   if (!r.ok) {
@@ -1037,6 +1054,7 @@ const Store = {
   _db: null, _fs: null, _auth: null, _au: null, _unsubs: [], _compteApp: null, _base: "",
 
   configOk() {
+    if (EMULATEUR) return true;   // faux Firebase local : voir EMULATEUR
     const c = window.CONFIG_FIREBASE;
     const remplie = !!(c && c.apiKey && c.apiKey !== "A_REMPLIR" && c.projectId && c.projectId !== "A_REMPLIR");
     if (!remplie) return false;
@@ -1065,6 +1083,7 @@ const Store = {
        n'est pas activée dans la console Firebase, un jeton manquant est
        simplement ignoré par le serveur. */
   async _activerAppCheck(a, base) {
+    if (EMULATEUR) return;        // l'emulateur ne verifie pas App Check
     const cle = (window.CONFIG_FIREBASE || {}).cleAppCheck;
     if (!cle || cle === "A_REMPLIR") return;
     try {
@@ -1097,9 +1116,10 @@ const Store = {
         import(base + "firebase-auth.js"),
         import(base + "firebase-firestore.js")
       ]);
-      const a = app.initializeApp(window.CONFIG_FIREBASE);
+      const a = app.initializeApp(configFirebase());
       await this._activerAppCheck(a, base);
       const au = auth.getAuth(a);
+      if (EMULATEUR) auth.connectAuthEmulator(au, "http://127.0.0.1:9099");
       this._auth = auth;
       this._au = au;
       this._base = base;
@@ -1117,6 +1137,7 @@ const Store = {
 
       this._fs = fs;
       this._db = fs.getFirestore(a);
+      if (EMULATEUR) fs.connectFirestoreEmulator(this._db, "127.0.0.1", 8085);
       this.uid = u.uid;
       this.mode = "nuage";
       /* Un lien magique a-t-il ete ouvert ? On le note seulement : il se
@@ -1173,13 +1194,16 @@ const Store = {
       import(base + "firebase-auth.js"),
       import(base + "firebase-firestore.js")
     ]);
-    const a = app.initializeApp(window.CONFIG_FIREBASE, "compte");
+    const a = app.initializeApp(configFirebase(), "compte");
     await this._activerAppCheck(a, base);
     const au = auth.initializeAuth(a, { persistence: auth.inMemoryPersistence });
+    if (EMULATEUR) auth.connectAuthEmulator(au, "http://127.0.0.1:9099");
     /* L'e-mail de connexion est redige par Firebase, en anglais par defaut.
        Cette langue-ci choisit sa traduction francaise. */
     au.languageCode = "fr";
-    this._compteApp = { auth: auth, au: au, fs: fs, db: fs.getFirestore(a) };
+    const db = fs.getFirestore(a);
+    if (EMULATEUR) fs.connectFirestoreEmulator(db, "127.0.0.1", 8085);
+    this._compteApp = { auth: auth, au: au, fs: fs, db: db };
     return this._compteApp;
   },
 
@@ -1192,7 +1216,7 @@ const Store = {
     /* Le lien ramene sur la page d'accueil, SANS rien dans l'adresse : ni
        jeton, ni adresse e-mail. Firebase deconseille d'y mettre l'adresse,
        cela ouvrirait la porte a une injection de session. */
-    const url = location.origin + location.pathname;
+    const url = location.origin + adresseNette();
     try {
       const c = await this._compte();
       await c.auth.sendSignInLinkToEmail(c.au, adresse, { url: url, handleCodeInApp: true });
@@ -1265,7 +1289,14 @@ const Store = {
     } catch (err) {
       console.warn("Lien de connexion refuse :", err);
       this.derniereErreur = err;
-      res.message = messageAuth(err);
+      /* Ici, « invalid-email » ne veut pas dire « adresse mal ecrite » : c'est
+         Firebase qui refuse une adresse DIFFERENTE de celle du lien (constate
+         sur l'emulateur le 10/09/2026). Le dire tel quel eviterait de faire
+         chercher une faute de frappe qui n'existe pas. */
+      res.message = (err && err.code === "auth/invalid-email")
+        ? "Cette adresse ne correspond pas au lien reçu. Vérifiez-la, ou ouvrez " +
+          "le lien dans le navigateur d’où vous l’avez demandé."
+        : messageAuth(err);
       return res;
     }
     try {
@@ -1302,8 +1333,28 @@ const Store = {
       return res;
     } finally {
       /* Fermee dans TOUS les cas : cette session ne doit jamais survivre. */
-      try { await c.auth.signOut(c.au); } catch (e) { /* deja fermee */ }
+      await this._effacerCompteConnexion(c);
     }
+  },
+
+  /* Mieux que fermer la session du compte : SUPPRIMER la fiche que Firebase
+     Authentication vient de creer pour cette adresse. Elle ne sert plus a
+     rien — l'identite durable est comptes/{adresse}, et les regles ne
+     regardent que l'adresse prouvee. Sans cela, toute adresse ayant ouvert
+     un lien, meme inconnue de toute tribu, resterait conservee chez Firebase
+     (constate sur l'emulateur le 10/09/2026). Le prochain lien en recreera
+     une, supprimee de la meme facon.
+     La suppression est permise depuis l'appareil parce que la connexion date
+     de quelques secondes. Si elle echoue (reseau), on ferme au moins la
+     session : c'etait le comportement d'avant. */
+  async _effacerCompteConnexion(c) {
+    if (!c) return;
+    const u = c.au.currentUser;
+    if (u) {
+      try { await c.auth.deleteUser(u); return; }   // ferme aussi la session
+      catch (e) { console.warn("Fiche de connexion non supprimee :", e); }
+    }
+    try { await c.auth.signOut(c.au); } catch (e) { /* deja fermee */ }
   },
 
   /* --- Comptes adultes : ce que l'administration en voit ---
@@ -4802,7 +4853,7 @@ async function demarrerVraiment() {
   const params = new URLSearchParams(location.search);
   const jetonUrl = params.get("invitation");
   if (jetonUrl) {
-    history.replaceState(null, "", location.pathname);
+    history.replaceState(null, "", adresseNette());
     $("#ecran-connexion").hidden = false;
     Connexion.aller("invitation", { jetonPreRempli: jetonUrl });
     return;
