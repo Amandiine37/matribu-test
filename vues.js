@@ -61,6 +61,22 @@ const Vues = {};
 
    On distingue donc les trois causes, et on dit dans chaque cas ce qu'il faut
    faire — y compris, pour la panne, ce qu'il NE faut surtout pas faire. */
+/* Un profil administrateur choisi sur un appareil qui n'a pas ces droits
+   (le téléphone d'un enfant, par exemple). L'application le traite alors en
+   simple membre : on dit pourquoi, au lieu de laisser croire que
+   l'administration a disparu. */
+function bandeauAdminSansDroits() {
+  if (!adminSansDroitsIci()) return "";
+  const profilAppareil = membre((etat.appareils || {})[Store.uid]);
+  return '<div class="bandeau info">🔑<div><b>Cet appareil n’a pas les droits d’administrateur.</b><br>' +
+    (profilAppareil && profilAppareil.id !== moi.id
+      ? "Il est entré dans la tribu comme « " + esc(profilAppareil.prenom) + " ». "
+      : "") +
+    "Ici, vous voyez la tribu comme un membre. Pour gérer les membres, valider les " +
+    "tâches ou changer les réglages, utilisez l’appareil sur lequel vous êtes " +
+    "administrateur.</div></div>";
+}
+
 function bandeauModeLocal() {
   if (Store.mode !== "local") return "";
 
@@ -188,6 +204,7 @@ Vues.accueil = function () {
   }
 
   h.push(bandeauModeLocal());
+  h.push(bandeauAdminSansDroits());
 
   /* Premiers pas : tant que la tribu n'est pas installée, on dit quoi faire.
      La carte disparaît d'elle-même une fois tout coché. */

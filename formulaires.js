@@ -1520,6 +1520,18 @@ Formulaires.membre = async function (mid) {
         return;
       }
 
+      /* Le compte adulte (adresse e-mail) s'enregistre AVANT le membre. S'il est
+         refuse — adresse deja liee a une autre tribu —, on ne cree ni ne modifie
+         rien, la fiche reste ouverte et on le dit. Avant, le membre etait cree
+         quand meme, sans compte, sur un message ambigu (constate le 10/09/2026).
+         Le drapeau « admin » est une COPIE du role, recalculee a chaque fois. */
+      const idCible = m ? m.id : id();
+      const ancien = (m && Store.mode === "nuage") ? Store.compteDe(m.id) : null;
+      if (Store.mode === "nuage" && connexion === "email" && !sansAppareil) {
+        const rc = await Store.enregistrerCompte(email, idCible, role === "admin");
+        if (!rc.ok) { toast(rc.message); return; }
+      }
+
       if (m) {
         m.prenom = String(d.get("prenom")).trim();
         m.emoji = emojiChoisi(f, "😀");
@@ -1531,7 +1543,7 @@ Formulaires.membre = async function (mid) {
       } else {
         if (!sansAppareil && !pin) { toast("Choisissez un code à 4 chiffres"); return; }
         const nouveau = {
-          id: id(), prenom: String(d.get("prenom")).trim(), emoji: emojiChoisi(f, "😀"),
+          id: idCible, prenom: String(d.get("prenom")).trim(), emoji: emojiChoisi(f, "😀"),
           role: role, sansAppareil: sansAppareil,
           creeLe: new Date().toISOString()
         };
@@ -1539,17 +1551,10 @@ Formulaires.membre = async function (mid) {
         etat.membres.push(nouveau);
       }
 
-      /* Le compte adulte vit A PART du membre : on l'ecrit, on le deplace ou on
-         le retire selon le choix fait ici. Le drapeau « admin » est une COPIE
-         du role, recalculee a chaque enregistrement, jamais saisie. */
+      /* Puis on range l'ancien compte : l'adresse a change (la nouvelle est
+         deja enregistree ci-dessus), ou la personne repasse « par code ». */
       if (Store.mode === "nuage") {
-        const cible = m || etat.membres[etat.membres.length - 1];
-        const ancien = Store.compteDe(cible.id);
-        if (connexion === "email" && !sansAppareil) {
-          if (ancien && ancien.adresse !== email) await Store.supprimerCompte(ancien.adresse);
-          const rc = await Store.enregistrerCompte(email, cible.id, role === "admin");
-          if (!rc.ok) toast(rc.message);
-        } else if (ancien) {
+        if (ancien && (connexion !== "email" || sansAppareil || ancien.adresse !== email)) {
           await Store.supprimerCompte(ancien.adresse);
         }
         Store.listerComptes(etat.famille.code);

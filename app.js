@@ -826,7 +826,19 @@ function lettreRecette(r) {
 }
 
 function membre(idm) { return etat.membres.find((m) => m.id === idm) || null; }
-function estAdmin() { return !!(moi && moi.role === "admin"); }
+/* Administrateur = un PROFIL administrateur, utilise sur un APPAREIL qui a
+   les droits d'administrateur cote serveur (liste adminsUid). Le code a 4
+   chiffres ne fait que choisir le profil sur l'appareil. Sans cette seconde
+   condition, l'application ouvrait l'administration sur un telephone entre
+   comme simple membre, et Firestore refusait ensuite chaque enregistrement
+   (« droits insuffisants », constate le 10/09/2026). En mode local, il n'y a
+   pas de serveur : le role suffit. */
+function estAdmin() {
+  if (!(moi && moi.role === "admin")) return false;
+  return Store.mode !== "nuage" || (etat.adminsUid || []).indexOf(Store.uid) !== -1;
+}
+/* Un profil administrateur choisi sur un appareil qui n'en a pas les droits. */
+function adminSansDroitsIci() { return !!(moi && moi.role === "admin") && !estAdmin(); }
 
 /* Profil « géré » : un enfant sans téléphone. Il participe normalement aux
    tâches, aux points et aux cadeaux, mais ne se connecte pas lui-même : ce
@@ -1391,8 +1403,12 @@ const Store = {
     } catch (err) {
       console.warn("Compte refuse :", err);
       this.derniereErreur = err;
+      /* L'appareil est forcement administrateur ici (estAdmin) : un refus veut
+         donc dire que l'adresse appartient deja a une autre tribu (1 adresse =
+         1 tribu). Le formulaire n'enregistre alors RIEN. */
       return { ok: false, message: (err && err.code === "permission-denied")
-        ? "Cette adresse est déjà utilisée par une autre famille, ou le serveur refuse."
+        ? "Cette adresse est déjà liée à une autre tribu : rien n’a été enregistré. " +
+          "Choisissez une autre adresse, ou « 🔑 Par code »."
         : "Enregistrement impossible" + (err && err.code ? " (" + err.code + ")" : "") + "." };
     }
   },
