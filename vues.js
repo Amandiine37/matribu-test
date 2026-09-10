@@ -1522,13 +1522,13 @@ const Connexion = {
      Deux ecrans : demander le lien, et confirmer l'adresse quand le lien a
      ete ouvert sur un appareil qui ne l'avait pas en memoire. */
   email(d) {
-    return this.entete("Recevez un lien par e-mail. Aucun mot de passe a retenir.") +
+    return this.entete("Recevez un lien par e-mail. Aucun mot de passe à retenir.") +
       '<form id="f-email">' +
       '<label class="champ"><span>Votre adresse e-mail</span>' +
       '<input type="email" name="email" required autocomplete="email" inputmode="email" ' +
       'placeholder="prenom@exemple.fr" value="' + esc(d.email || Store.emailRetenu()) + '"></label>' +
-      '<p class="aide" style="margin:-.4rem 0 1rem">Celle que votre famille a enregistree pour vous. ' +
-      "Si vous n'en avez pas, demandez un code d'invitation a un administrateur.</p>" +
+      '<p class="aide" style="margin:-.4rem 0 1rem">Celle que votre famille a enregistrée pour vous. ' +
+      "Si vous n'en avez pas, demandez un code d’invitation à un administrateur.</p>" +
       '<button class="btn principal plein" type="submit">Recevoir le lien</button>' +
       '<button class="lien" type="button" id="b-retour" style="display:block;margin:1rem auto 0">Retour</button>' +
       "</form>";
@@ -1537,13 +1537,14 @@ const Connexion = {
   emailEnvoye(d) {
     return this.entete("C'est parti.") +
       '<div class="bandeau info">💌<div><b>Un lien vient de partir vers ' + esc(d.email) + ".</b><br>" +
-      "Ouvrez-le depuis ce telephone. Il n'est valable qu'une fois.</div></div>" +
-      '<div class="bandeau">📱<div><b>Vous utilisez l' + "'" + 'icone Ma Tribu ?</b><br>' +
-      "Sur iPhone, le lien ouvrira <b>Safari</b>, pas l'icone : les deux ont des memoires " +
-      "separees. Une fois connecte dans Safari, l'application vous proposera un code " +
-      "court a recopier dans l'icone.</div></div>" +
-      '<p class="aide centre">Rien recu ? Regardez dans les indesirables, ' +
-      "puis reessayez dans quelques minutes.</p>" +
+      "Ouvrez-le <b>dans ce même navigateur</b>, sur cet appareil. Ouvert ailleurs, " +
+      "l’application vous redemandera votre adresse. Il n’est valable qu’une fois.</div></div>" +
+      '<div class="bandeau">📱<div><b>Vous utilisez l’icône Ma Tribu ?</b><br>' +
+      "Sur iPhone, le lien ouvrira <b>Safari</b>, pas l’icône : les deux ont des mémoires " +
+      "séparées. Une fois connecté dans Safari, l’application vous proposera un code " +
+      "court à recopier dans l’icône.</div></div>" +
+      '<p class="aide centre">Rien reçu ? Regardez dans les indésirables, ' +
+      "puis réessayez dans quelques minutes.</p>" +
       '<button class="btn plein" id="b-retour" style="margin-top:.6rem">Retour</button>';
   },
 
@@ -1560,7 +1561,8 @@ const Connexion = {
     return this.entete("Confirmez votre adresse pour terminer la connexion.") +
       err +
       '<p class="aide" style="margin-bottom:1rem">Vous avez ouvert votre lien sur un appareil ' +
-      "qui ne l'attendait pas. C'est normal, et c'est une securite : le lien seul ne suffit pas.</p>" +
+      "qui ne l’attendait pas. C’est normal, et c’est une sécurité : le lien seul ne suffit pas. " +
+      "Vous pouvez aussi copier le lien et le coller dans le navigateur d’où vous l’avez demandé.</p>" +
       '<form id="f-confirmer-email">' +
       '<label class="champ"><span>Votre adresse e-mail</span>' +
       '<input type="email" name="email" required autocomplete="email" inputmode="email" ' +

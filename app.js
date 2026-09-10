@@ -1176,6 +1176,9 @@ const Store = {
     const a = app.initializeApp(window.CONFIG_FIREBASE, "compte");
     await this._activerAppCheck(a, base);
     const au = auth.initializeAuth(a, { persistence: auth.inMemoryPersistence });
+    /* L'e-mail de connexion est redige par Firebase, en anglais par defaut.
+       Cette langue-ci choisit sa traduction francaise. */
+    au.languageCode = "fr";
     this._compteApp = { auth: auth, au: au, fs: fs, db: fs.getFirestore(a) };
     return this._compteApp;
   },
