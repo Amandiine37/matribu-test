@@ -962,6 +962,16 @@ function recalculerIndexSur(d) {
   });
   if (Store.uid && uids.indexOf(Store.uid) === -1) uids.push(Store.uid);
 
+  /* Filet anti-verrouillage des ADMINISTRATEURS : un recalcul ne doit jamais
+     laisser la tribu sans aucun appareil administrateur — plus personne ne
+     pourrait la gerer, ni meme la supprimer. C'est arrive le 10/09/2026 : le
+     seul appareil administrateur s'etait range sous un autre profil en
+     ouvrant une invitation, et le recalcul suivant l'avait retire des
+     administrateurs. On garde alors ceux d'avant (s'ils sont toujours la). */
+  if (!admins.length) {
+    (d.adminsUid || []).forEach((u) => { if (uids.indexOf(u) !== -1) admins.push(u); });
+  }
+
   d.membresUid = uids;
   d.adminsUid = admins;
   d.bareme = {};
@@ -1452,6 +1462,29 @@ const Store = {
      Ne leve jamais d'exception : renvoie null et note la cause dans
      `derniereErreur`, pour que l'appelant puisse expliquer plutot que planter. */
   derniereErreur: null,
+
+  /* CET appareil est-il deja inscrit dans la famille `code` ? Renvoie le nom
+     de la famille et le profil sous lequel il est inscrit, ou null. Un
+     appareil qui n'en fait pas partie ne peut pas la lire : la lecture est
+     refusee, et c'est justement la reponse « non ». */
+  async profilDeCetAppareil(code) {
+    if (!code) return null;
+    let d = null;
+    if (this.mode !== "nuage") d = this._lireLocal(code);
+    else {
+      try {
+        const s = await this._fs.getDoc(this._fs.doc(this._db, "familles", code));
+        d = s.exists() ? s.data() : null;
+      } catch (err) { return null; }
+    }
+    if (!d) return null;
+    const membres = d.membres || [];
+    const idProfil = (d.appareils || {})[this.uid] ||
+      (membres.find((x) => (x.uids || []).indexOf(this.uid) !== -1) || {}).id;
+    if (!idProfil && (d.membresUid || []).indexOf(this.uid) === -1) return null;
+    const m = membres.find((x) => x.id === idProfil);
+    return { nomFamille: (d.famille && d.famille.nom) || code, prenom: m ? m.prenom : "un autre profil" };
+  },
 
   async charger(code) {
     this.derniereErreur = null;
@@ -2942,6 +2975,20 @@ const Invitations = {
       return { ok: false, message: "Cette invitation a déjà été utilisée." };
     }
     if (inv.expireLe && inv.expireLe < Date.now()) return { ok: false, message: "Cette invitation a expiré." };
+    /* Un appareil DEJA inscrit dans cette famille n'accepte pas d'invitation
+       pour elle. Sinon il se rangeait sous le profil invite, a la place du
+       sien — et un administrateur perdait ainsi ses droits : c'est arrive le
+       10/09/2026, en ouvrant l'invitation d'un membre dans la meme fenetre
+       privee que celle ou la tribu avait ete creee. */
+    const deja = await Store.profilDeCetAppareil(inv.famille);
+    if (deja) {
+      return {
+        ok: false,
+        message: "Cet appareil fait déjà partie de la tribu « " + deja.nomFamille + " », comme « " +
+          deja.prenom + " ». Une invitation sert à faire entrer un AUTRE appareil : ouvrez-la " +
+          "sur le téléphone de la personne invitée."
+      };
+    }
     return { ok: true, invitation: inv };
   }
 };
