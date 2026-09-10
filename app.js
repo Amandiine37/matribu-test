@@ -528,7 +528,13 @@ async function terminerLienCompte(adresse) {
   }
   localStorage.setItem("tribu:derniereFamille", r.code);
   toast(r.dejaMembre ? "Cet appareil était déjà rattaché" : "Appareil rattaché à votre profil ✅");
-  Connexion.aller("profils", { code: r.code, donnees: donnees, jeton: null });
+  /* Le lien dit deja QUI entre : on va droit a son code a 4 chiffres, sans
+     lui faire rechoisir son nom dans la liste de tous les membres. « Changer
+     de profil » reste possible depuis cet ecran (telephone partage). Si le
+     profil est introuvable, on retombe sur la liste. */
+  const d = { code: r.code, donnees: donnees, jeton: null };
+  const profil = (donnees.membres || []).find((x) => x.id === r.membre);
+  Connexion.aller(profil ? "pin" : "profils", profil ? Object.assign(d, { membre: profil }) : d);
   return true;
 }
 

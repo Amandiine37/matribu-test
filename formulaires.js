@@ -33,6 +33,9 @@ function puceMultiple(role, options, choisis) {
 function brancherMulti(f, role, unique) {
   const g = f.querySelector('[data-role="' + role + '"]');
   if (!g) return;
+  /* Choix unique : le choix deja retenu ne doit pas ressembler a un bouton
+     (curseur « main » au survol), puisque cliquer dessus ne change rien. */
+  if (unique) g.classList.add("unique");
   g.onclick = (ev) => {
     const b = ev.target.closest("[data-val]");
     if (!b) return;
