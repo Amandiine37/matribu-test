@@ -314,14 +314,35 @@ function toast(msg) {
   clearTimeout(minuterieToast);
   minuterieToast = setTimeout(() => t.classList.remove("on"), 2600);
 }
+/* La page de derrière reste figée tant qu'une feuille est ouverte, puis
+   revient exactement où elle était. Une feuille qui en remplace une autre
+   (confirmation, fiche suivante) ne refige pas : on garde la position d'origine. */
+function figerPage() {
+  const b = document.body;
+  if (b.classList.contains("feuille-ouverte")) return;
+  b.dataset.defilement = String(window.scrollY || 0);
+  b.style.top = -(window.scrollY || 0) + "px";
+  b.classList.add("feuille-ouverte");
+}
+function libererPage() {
+  const b = document.body;
+  if (!b.classList.contains("feuille-ouverte")) return;
+  const y = Number(b.dataset.defilement || 0);
+  b.classList.remove("feuille-ouverte");
+  b.style.top = "";
+  window.scrollTo(0, y);
+}
 function ouvrirFeuille(titre, html, apres) {
   const f = $("#feuille");
   f.innerHTML = '<div class="feuille-poignee"></div>' +
     (titre ? "<h3>" + esc(titre) + "</h3>" : "") + html;
+  f.scrollTop = 0;
+  figerPage();
   $("#voile").classList.add("on");
   if (apres) apres(f);
 }
 function fermerFeuille() {
+  libererPage();
   $("#voile").classList.remove("on");
   setTimeout(() => { if (!$("#voile").classList.contains("on")) $("#feuille").innerHTML = ""; }, 250);
 }
@@ -667,7 +688,12 @@ const ui = {
   filtreQuiNotes: "",            // "" = tout le monde, sinon un id de membre
   ongletCourses: "liste",        // "liste" ou "stock"
   rechercheRecette: "",
-  filtresRecettes: [],           // "perso", "vege", "rapide", "leger"
+  /* "perso", "vege", "rapide", "leger"… gardés sur l'appareil d'une ouverture
+     à l'autre (avant, ils se perdaient à chaque rechargement). */
+  filtresRecettes: (() => {
+    try { const l = JSON.parse(localStorage.getItem("tribu:filtresRecettes") || "[]"); return Array.isArray(l) ? l : []; }
+    catch (e) { return []; }
+  })(),
   triRecettes: "alpha",          // "alpha", "recent", "saison"
   filtresOuverts: false,         // les rangées de filtres sont repliées
   focus: null
@@ -778,27 +804,61 @@ function devinerSaisons(ingredients) {
   return SAISONS.filter((s) => scores[s.val] >= max).map((s) => s.val);
 }
 
+/* Cuisine du monde : le champ « cuisine » (pays ou région d'origine) des
+   plats fournis. Les copies des familles plus anciennes ne l'ont pas : on le
+   retrouve alors dans la bibliothèque de départ, par le nom du plat. */
+let _cuisinesDepart = null;
+function cuisineDe(r) {
+  if (!r) return "";
+  if (r.cuisine) return r.cuisine;
+  if (!_cuisinesDepart) {
+    _cuisinesDepart = new Map((window.RECETTES_DEPART || []).filter((x) => x.cuisine)
+      .map((x) => [x.nom.toLowerCase().trim(), x.cuisine]));
+  }
+  return _cuisinesDepart.get(String(r.nom || "").toLowerCase().trim()) || "";
+}
+function estCuisineDuMonde(r) { return !!cuisineDe(r); }
+
+/* Un plat passe-t-il cette recherche et ces filtres ? Source UNIQUE, pour le
+   cahier de recettes ET la liste « Changer le plat » d'un repas : quand deux
+   écrans parlent du même état, ils appellent la même fonction. */
+function recetteCorrespond(r, recherche, f) {
+  const q = pourChercher(recherche || "").trim();
+  f = f || [];
+  if (q && !pourChercher(r.nom).includes(q) &&
+    !(r.ingredients || []).some((i) => pourChercher(i.nom).includes(q))) return false;
+  if (f.includes("perso") && !estRecettePerso(r)) return false;
+  if (f.includes("vege") && !r.vegetarien) return false;
+  if (f.includes("rapide") && !r.rapide) return false;
+  if (f.includes("leger") && r.type !== "leger") return false;
+  if (f.includes("saison") && !estDeSaison(r)) return false;
+  if (f.includes("thermomix") && !r.thermomix) return false;
+  if (f.includes("dessert") && !estDessert(r)) return false;
+  if (f.includes("plat") && estDessert(r)) return false;
+  if (f.includes("monde") && !estCuisineDuMonde(r)) return false;
+  /* Les profils santé voyagent dans la même liste, préfixés : « sante:coeur ».
+     Plusieurs profils cochés se cumulent — le plat doit tenir les deux. */
+  for (let k = 0; k < f.length; k++) {
+    if (f[k].indexOf("sante:") === 0 && !aLeProfil(r, f[k].slice(6))) return false;
+  }
+  return true;
+}
+
 function recettesFiltrees() {
-  const q = pourChercher(ui.rechercheRecette).trim();
-  const f = ui.filtresRecettes;
-  return etat.recettes.filter((r) => {
-    if (q && !pourChercher(r.nom).includes(q) &&
-      !(r.ingredients || []).some((i) => pourChercher(i.nom).includes(q))) return false;
-    if (f.includes("perso") && !estRecettePerso(r)) return false;
-    if (f.includes("vege") && !r.vegetarien) return false;
-    if (f.includes("rapide") && !r.rapide) return false;
-    if (f.includes("leger") && r.type !== "leger") return false;
-    if (f.includes("saison") && !estDeSaison(r)) return false;
-    if (f.includes("thermomix") && !r.thermomix) return false;
-    if (f.includes("dessert") && !estDessert(r)) return false;
-    if (f.includes("plat") && estDessert(r)) return false;
-    /* Les profils santé voyagent dans la même liste, préfixés : « sante:coeur ».
-       Plusieurs profils cochés se cumulent — le plat doit tenir les deux. */
-    for (let k = 0; k < f.length; k++) {
-      if (f[k].indexOf("sante:") === 0 && !aLeProfil(r, f[k].slice(6))) return false;
-    }
-    return true;
-  }).sort(comparerRecettes(ui.triRecettes));
+  return etat.recettes.filter((r) => recetteCorrespond(r, ui.rechercheRecette, ui.filtresRecettes))
+    .sort(comparerRecettes(ui.triRecettes));
+}
+
+/* Une liste gardée sur l'appareil (les filtres cochés, par exemple) : on la
+   retrouve à la prochaine ouverture au lieu de tout recocher. */
+function lireListeMemorisee(cle) {
+  try {
+    const l = JSON.parse(localStorage.getItem(cle) || "null");
+    return Array.isArray(l) ? l : null;
+  } catch (e) { return null; }
+}
+function memoriserListe(cle, l) {
+  try { localStorage.setItem(cle, JSON.stringify(l)); } catch (e) { /* navigation privée */ }
 }
 
 /* Les trois façons de ranger le cahier. « recent » se fie d'abord à la date
@@ -873,6 +933,30 @@ function aUnAppareil(m) {
 }
 function membresConnectables() { return etat.membres.filter((m) => !m.sansAppareil); }
 
+/* --- Les appareils d'un membre (étape 2) ---
+   Pour la fiche « Appareils » : cet appareil d'abord, puis par date d'ajout.
+   Un appareil d'avant la 0.50 n'a pas d'informations : « Appareil » suffit. */
+function appareilsDe(membreId) {
+  const infos = etat.appareilsInfos || {};
+  return Object.keys(etat.appareils || {})
+    .filter((u) => etat.appareils[u] === membreId)
+    .map((u) => ({
+      uid: u, ici: u === Store.uid,
+      admin: (etat.adminsUid || []).indexOf(u) !== -1,
+      type: (infos[u] && infos[u].type) || "Appareil",
+      ajouteLe: (infos[u] && infos[u].ajouteLe) || "",
+      par: (infos[u] && infos[u].par) || ""
+    }))
+    .sort((a, b) => (b.ici ? 1 : 0) - (a.ici ? 1 : 0) || a.ajouteLe.localeCompare(b.ajouteLe));
+}
+function appareilsRetiresDe(membreId) {
+  const r = etat.appareilsRevoques || {};
+  return Object.keys(r)
+    .filter((u) => r[u] && r[u].membre === membreId)
+    .map((u) => Object.assign({ uid: u }, r[u]))
+    .sort((a, b) => String(b.le || "").localeCompare(String(a.le || "")));
+}
+
 /* Les tâches en attente des enfants gérés, pour que le parent les coche. */
 function tachesDesEnfants() {
   return tachesDuMoment().filter((x) => x.assigne && estGere(x.assigne) && x.et.statut === "afaire");
@@ -941,8 +1025,11 @@ function recalculerIndexSur(d) {
   const uids = [];
   const admins = [];
   const profil = (idm) => (d.membres || []).find((m) => m.id === idm) || null;
+  /* Un appareil retiré (étape 2) n'est JAMAIS remis dans les listes d'accès,
+     d'où qu'il vienne : les règles refuseraient d'ailleurs l'écriture (I4). */
+  const revoque = (u) => !!(d.appareilsRevoques && d.appareilsRevoques[u]);
   const ajoute = (u, estAdminDuProfil) => {
-    if (!u) return;
+    if (!u || revoque(u)) return;
     if (uids.indexOf(u) === -1) uids.push(u);
     if (estAdminDuProfil && admins.indexOf(u) === -1) admins.push(u);
   };
@@ -964,9 +1051,9 @@ function recalculerIndexSur(d) {
     return cible !== undefined && !profil(cible);
   };
   (d.membresUid || []).forEach((u) => {
-    if (uids.indexOf(u) === -1 && !orphelin(u)) uids.push(u);
+    if (uids.indexOf(u) === -1 && !orphelin(u) && !revoque(u)) uids.push(u);
   });
-  if (Store.uid && uids.indexOf(Store.uid) === -1) uids.push(Store.uid);
+  if (Store.uid && uids.indexOf(Store.uid) === -1 && !revoque(Store.uid)) uids.push(Store.uid);
 
   /* Filet anti-verrouillage des ADMINISTRATEURS : un recalcul ne doit jamais
      laisser la tribu sans aucun appareil administrateur — plus personne ne
@@ -1174,7 +1261,9 @@ const Store = {
     } catch (err) {
       console.warn("Firebase indisponible, passage en mode local :", err);
       this.mode = "local";
-      this.raison = "erreur";
+      /* Deux pannes différentes, deux explications : le serveur injoignable,
+         ou la mémoire du navigateur qui ne répond pas. */
+      this.raison = (err && err.code === "stockage-bloque") ? "stockage" : "erreur";
       this.uid = this._uidLocal();
     }
   },
@@ -1184,10 +1273,27 @@ const Store = {
      finie : c'est le seul moyen fiable de savoir si quelqu'un est deja
      connecte, currentUser valant null tant que la lecture n'est pas faite. */
   _sessionExistante() {
-    return new Promise((ok) => {
-      const stop = this._auth.onAuthStateChanged(this._au, (u) => { stop(); ok(u || null); });
+    return new Promise((ok, ko) => {
+      /* Firebase relit la session enregistrée dans la mémoire du navigateur
+         (IndexedDB) : d'habitude c'est instantané, sans réseau. Si cette
+         mémoire est indisponible ou bloquée (navigation privée restrictive,
+         stockage plein, autre onglet resté figé), Firebase attendait SANS FIN :
+         le démarrage s'arrêtait sans rien dire, sur « Ça coince — aucun
+         message technique » (constaté le 11/09/2026). On borne donc l'attente
+         et on le dit clairement. */
+      const minuterie = setTimeout(() => {
+        const e = new Error("La mémoire du navigateur ne répond pas.");
+        e.code = "stockage-bloque";
+        ko(e);
+      }, this.DELAI_SESSION);
+      const stop = this._auth.onAuthStateChanged(this._au, (u) => {
+        clearTimeout(minuterie); stop(); ok(u || null);
+      });
     });
   },
+  /* Assez long pour un vieux téléphone, assez court pour répondre avant le
+     garde-fou des 8 secondes d'index.html. */
+  DELAI_SESSION: 4000,
 
   /* --- Connexion par lien magique ---------------------------------------
 
@@ -1201,6 +1307,13 @@ const Store = {
      exemple), on ne l'a pas : l'application demande alors de la confirmer,
      ce qui est une friction acceptable et, en verite, une protection. */
   CLE_EMAIL_ATTENTE: "tribu:emailLien",
+  /* « Un lien vient d'être envoyé d'ici pour quelqu'un d'autre » : juste une
+     date, JAMAIS l'adresse de cette personne. Sert seulement à expliquer
+     pourquoi on redemande l'adresse si le lien s'ouvre sur cet appareil. */
+  CLE_LIEN_ENVOYE: "tribu:lienEnvoyeIci",
+  /* Pourquoi l'adresse n'est pas connue au retour d'un lien : "envoyeIci",
+     "expire" ou "ailleurs". L'écran de confirmation dit la vraie raison. */
+  raisonEmailAbsent: "",
 
   /* --- La session du COMPTE ADULTE ---------------------------------------
 
@@ -1275,6 +1388,8 @@ const Store = {
     catch (e) { /* navigation privee : on redemandera, ce n'est pas grave */ }
   },
   emailRetenu() {
+    /* Par défaut, le lien vient d'un autre navigateur ; on précise ensuite. */
+    this.raisonEmailAbsent = this._lienEnvoyeIci() ? "envoyeIci" : "ailleurs";
     let brut = null;
     try { brut = localStorage.getItem(this.CLE_EMAIL_ATTENTE); } catch (e) { return ""; }
     if (!brut) return "";
@@ -1284,12 +1399,25 @@ const Store = {
     if (!p || typeof p !== "object" || !p.a) { this.oublierEmail(); return ""; }
     if (Date.now() - (Number(p.t) || 0) > this.DUREE_EMAIL_ATTENTE) {
       this.oublierEmail();
+      this.raisonEmailAbsent = "expire";
       return "";
     }
+    this.raisonEmailAbsent = "";
     return p.a;
   },
   oublierEmail() {
     try { localStorage.removeItem(this.CLE_EMAIL_ATTENTE); } catch (e) { }
+    try { localStorage.removeItem(this.CLE_LIEN_ENVOYE); } catch (e) { }
+  },
+  /* Un lien envoyé d'ici pour quelqu'un d'autre (fiche d'invitation) : on
+     n'en garde que la date, une heure au plus, comme l'adresse retenue. */
+  marquerLienEnvoyeIci() {
+    try { localStorage.setItem(this.CLE_LIEN_ENVOYE, String(Date.now())); } catch (e) { }
+  },
+  _lienEnvoyeIci() {
+    let t = 0;
+    try { t = Number(localStorage.getItem(this.CLE_LIEN_ENVOYE)) || 0; } catch (e) { return false; }
+    return !!t && Date.now() - t <= this.DUREE_EMAIL_ATTENTE;
   },
 
   /* Termine un lien magique et rattache CET appareil au profil de l'adresse.
@@ -1539,8 +1667,13 @@ const Store = {
   async marquerRepere(code) {
     if (this.mode !== "nuage") return;
     try {
+      /* Une vraie date Firebase, a l'heure du SERVEUR : la console l'affiche
+         en clair (« 19 août 2026 à 22:28:28 »), la ou un nombre de
+         millisecondes restait illisible. Personne ne la relit : seule
+         l'existence du repere compte. Les reperes plus anciens gardent leur
+         nombre. */
       await this._fs.setDoc(this._fs.doc(this._db, "reperes", code),
-        { creeLe: Date.now() });
+        { creeLe: this._fs.serverTimestamp() });
     } catch (err) {
       console.warn("Repère non enregistré dans l'annuaire :", err);
     }
@@ -1563,10 +1696,16 @@ const Store = {
 
   abonner(code, cb) {
     this.code = code;
+    this._cbAbonnement = cb;             // pour se réabonner après un simple accroc
     this._detacher();
     if (this.mode === "nuage") {
       const d = this._db, fs = this._fs;
-      const surErreur = (err) => console.warn("Ecoute interrompue :", err);
+      /* Un refus peut signifier que cet appareil a été retiré : on vérifie
+         (étape 3, _verifierAcces). Les autres erreurs restent notées seulement. */
+      const surErreur = (err) => {
+        console.warn("Ecoute interrompue :", err);
+        if (err && err.code === "permission-denied") this._verifierAcces(code);
+      };
       this._unsubs.push(fs.onSnapshot(fs.doc(d, "familles", code), (s) => {
         if (s.exists()) cb(s.data(), "doc");
       }, surErreur));
@@ -1592,6 +1731,52 @@ const Store = {
   _detacher() {
     this._unsubs.forEach((u) => { try { u(); } catch (e) { } });
     this._unsubs = [];
+  },
+
+  /* Étape 3 — un appareil retiré réagit tout de suite.
+     Une écoute refusée peut vouloir dire que cet appareil a été retiré, ou
+     que la tribu a été supprimée. On ne conclut pas sur un seul refus : on
+     relit la famille directement au serveur.
+     - Toujours refusé : l'accès est perdu, on prévient l'application (une fois).
+     - Relu sans problème : simple accroc, on se réabonne (au plus toutes les 30 s).
+     - Serveur injoignable : on ne conclut rien ; l'écoute se refusera de
+       nouveau au retour du réseau si l'accès est vraiment perdu. */
+  async _verifierAcces(code) {
+    if (this._verifAcces || this.code !== code) return;
+    this._verifAcces = true;
+    try {
+      await this._fs.getDocFromServer(this._fs.doc(this._db, "familles", code));
+      if (this.code === code && this._cbAbonnement
+          && Date.now() - (this._dernierReabonnement || 0) > 30000) {
+        this._dernierReabonnement = Date.now();
+        this.abonner(code, this._cbAbonnement);
+      }
+    } catch (err) {
+      if (err && err.code === "permission-denied" && this.code === code) {
+        this._detacher();
+        accesPerdu(code);
+      }
+    } finally {
+      this._verifAcces = false;
+    }
+  },
+
+  /* « Repartir de zéro » (étape 3) et « Quitter la tribu » (étape 4) : tout ce
+     que Ma Tribu garde dans ce navigateur est effacé, et la session de
+     l'appareil est supprimée (à défaut, fermée). Au prochain démarrage
+     l'appareil reçoit une identité NEUVE : c'est elle qu'une nouvelle
+     invitation ou le lien e-mail pourront rattacher, l'ancienne étant
+     révoquée pour de bon (invariant I4). Jamais appelée sans que la personne
+     l'ait demandé : un refus du serveur peut avoir d'autres causes. */
+  async oublierCetAppareil() {
+    this._detacher();
+    Object.keys(localStorage).filter((k) => k.indexOf("tribu:") === 0)
+      .forEach((k) => { try { localStorage.removeItem(k); } catch (e) { } });
+    if (this.mode === "nuage" && this._au && this._au.currentUser) {
+      try { await this._auth.deleteUser(this._au.currentUser); return; }
+      catch (e) { console.warn("Session de l'appareil non supprimée, fermée à la place :", e); }
+      try { await this._auth.signOut(this._au); } catch (e) { /* déjà fermée */ }
+    }
   },
 
   /* --- ecriture du document principal (une ou plusieurs rubriques) --- */
@@ -1621,6 +1806,49 @@ const Store = {
     } catch (err) {
       console.warn("Retrait d'appareil refusé :", err);
     }
+  },
+
+  /* Retire UN appareil (étape 2, parcours P5) : il sort du registre, de ses
+     informations et des listes d'accès, et il est inscrit parmi les révoqués
+     pour ne jamais revenir (invariant I4). Le tout en UNE écriture : les
+     règles vérifient l'ensemble — droits d'administrateur, ou
+     retireUnDeSesAppareils pour un membre qui retire l'un de SES appareils. */
+  async retirerAppareil(uid) {
+    const membreId = (etat.appareils || {})[uid] || null;
+    const tombe = {
+      le: new Date().toISOString(), par: moi ? moi.id : null, membre: membreId,
+      type: ((etat.appareilsInfos || {})[uid] || {}).type || null
+    };
+    const estAdminUid = (etat.adminsUid || []).indexOf(uid) !== -1;
+    if (this.mode === "nuage") {
+      const fs = this._fs;
+      const morceau = {
+        appareils: { [uid]: fs.deleteField() },
+        appareilsInfos: { [uid]: fs.deleteField() },
+        appareilsRevoques: { [uid]: tombe },
+        membresUid: fs.arrayRemove(uid)
+      };
+      if (estAdminUid) morceau.adminsUid = fs.arrayRemove(uid);
+      try {
+        await fs.setDoc(fs.doc(this._db, "familles", this.code), morceau, { merge: true });
+      } catch (err) {
+        console.warn("Retrait d'appareil refusé :", err);
+        this.derniereErreur = err;
+        return {
+          ok: false, message: (err && err.code === "permission-denied")
+            ? "Le serveur a refusé ce retrait." : "Retrait impossible pour l’instant."
+        };
+      }
+    }
+    /* Même chose dans l'état en mémoire, sans attendre l'écoute en direct. */
+    if (etat.appareils) delete etat.appareils[uid];
+    if (etat.appareilsInfos) delete etat.appareilsInfos[uid];
+    etat.appareilsRevoques = Object.assign({}, etat.appareilsRevoques || {}, { [uid]: tombe });
+    etat.membresUid = (etat.membresUid || []).filter((u) => u !== uid);
+    etat.adminsUid = (etat.adminsUid || []).filter((u) => u !== uid);
+    if (this.mode !== "nuage") this._ecrireLocal(this.code, etat);
+    rendre();
+    return { ok: true };
   },
 
   /* --- ecriture de l'etat d'une tache --- */
@@ -2226,7 +2454,11 @@ async function entrerDansFamille(code, membreId, opts) {
   }
 
   Store.code = code;
-  Store.abonner(code, (nouv, portee) => { appliquerDonnees(nouv, portee); rendre(); });
+  Store.abonner(code, (nouv, portee) => {
+    appliquerDonnees(nouv, portee);
+    rendre();
+    if (portee === "doc") Formulaires.rafraichirAppareils();   // fenêtre ouverte à jour
+  });
   ecrireSession({ code: code, membreId: membreId });
   localStorage.setItem("tribu:derniereFamille", code);
   verifierRepere(code);          // en arrière-plan, sans bloquer l'ouverture
@@ -2289,6 +2521,36 @@ async function deconnecter() {
   }
   etat = etatVide();
   Connexion.aller("accueil");
+}
+
+/* Étape 3 — l'appareil retiré réagit tout de suite.
+
+   Appelée quand le serveur a CONFIRMÉ le refus (Store._verifierAcces), ou au
+   démarrage quand la tribu est refusée. On coupe les écoutes et on efface ce
+   qui était affiché : les données en mémoire, la fenêtre ouverte, les vues,
+   les onglets et l'en-tête. Puis l'écran neutre.
+
+   Rien n'est effacé du navigateur ici — ni la session, ni le repère de la
+   tribu : un refus peut aussi venir d'un réglage du serveur. C'est
+   « Repartir de zéro », sur cet écran, qui les efface, et seulement si la
+   personne le demande. */
+function accesPerdu(code) {
+  Store._detacher();
+  Store.code = null;
+  fermerFeuille();
+  $("#feuille").innerHTML = "";
+  moi = null;
+  etat = etatVide();
+  document.querySelectorAll("#ecran-app .vue").forEach((s) => { s.innerHTML = ""; });
+  $("#nav-inner").innerHTML = "";
+  $("#titre-vue").textContent = "";
+  $("#sous-titre-vue").textContent = "";
+  $("#mes-points").textContent = "0";
+  $("#btn-profil").textContent = "🙂";
+  $("#fab").hidden = true;
+  $("#ecran-app").hidden = true;
+  $("#ecran-connexion").hidden = false;
+  Connexion.aller("accesPerdu", { code: code });
 }
 
 /* ============================ 6. Actions ============================ */
@@ -2988,8 +3250,11 @@ const Invitations = {
        privee que celle ou la tribu avait ete creee. */
     const deja = await Store.profilDeCetAppareil(inv.famille);
     if (deja) {
+      /* L'écran d'invitation s'en sert pour RAMENER l'appareil dans sa tribu
+         (données effacées, tribu oubliée…) sans rien écrire : refuser
+         simplement laissait la personne dans une impasse (11/09/2026). */
       return {
-        ok: false,
+        ok: false, dejaMembre: true, code: inv.famille, invitation: inv,
         message: "Cet appareil fait déjà partie de la tribu « " + deja.nomFamille + " », comme « " +
           deja.prenom + " ». Une invitation sert à faire entrer un AUTRE appareil : ouvrez-la " +
           "sur le téléphone de la personne invitée."
@@ -3830,8 +4095,16 @@ function genererMenus(cleSem, opt) {
   const semaine = etat.repas[cleSem] || {};
   const cases = [];
   let absences = 0;
+  /* Regeneration CIBLEE (« 🎲 Autre idée » dans la fiche d'un repas) : on ne
+     refait que ces cases-la, avec les memes reglages que le generateur, en
+     tenant compte du reste de la semaine deja prevu. */
+  const cibles = opt.cibles ? new Set(opt.cibles.map((c) => c.jour + "-" + c.moment)) : null;
   JOURS.forEach((j) => {
     ["midi", "soir"].forEach((m) => {
+      if (cibles) {
+        if (cibles.has(j + "-" + m) && !estAbsence(semaine[j + "-" + m])) cases.push({ jour: j, moment: m });
+        return;
+      }
       if (m === "midi" && !opt.midi) return;
       if (m === "soir" && !opt.soir) return;
       /* Une absence n'est jamais remplie, même en mode « remplacer » : c'est
@@ -3857,7 +4130,23 @@ function genererMenus(cleSem, opt) {
     fixees.push(c.val);
   });
   const demande = CATEGORIES_REPAS.reduce((s, c) => s + quotas[c.val], 0);
-  const plan = repartitionSouhaitee(cases.length, quotas).plan;
+  /* Ce que contenaient les cases ciblees avant d'etre refaites. */
+  const recetteDeCase = (v) => (v && v.recetteId ? etat.recettes.find((x) => x.id === v.recetteId) || null : null);
+  const avant = {};
+  if (cibles) cases.forEach((c) => {
+    const k = c.jour + "-" + c.moment;
+    avant[k] = semaine[k] ? Object.assign({}, semaine[k]) : null;
+  });
+  /* En regeneration ciblee, une case garde la categorie du plat qu'elle
+     remplace quand vous en aviez fixe le nombre (« 2 poissons ») : changer un
+     poisson donne un autre poisson, et le compte de la semaine reste juste. */
+  const plan = cibles
+    ? cases.map((c) => {
+      const r = recetteDeCase(avant[c.jour + "-" + c.moment]);
+      const cat = r ? categorieRepas(r) : null;
+      return cat && fixees.indexOf(cat) !== -1 ? cat : "libre";
+    })
+    : repartitionSouhaitee(cases.length, quotas).plan;
 
   /* L'anti-gaspillage est un réglage de la famille, pas une case à cocher à
      chaque génération : on le lit là, sauf si l'appelant tranche lui-même. */
@@ -3868,6 +4157,19 @@ function genererMenus(cleSem, opt) {
   /* Combien de plats de chaque genre sont déjà posés dans la semaine. */
   const genresPoses = {};
   const bilan = { poisson: 0, viande: 0, vege: 0, autre: 0 };
+  /* En regeneration ciblee, le reste de la semaine compte : pas de doublon
+     avec un plat deja prevu un autre jour, et la variete des genres tient
+     compte de ce qui est deja pose. */
+  if (cibles) {
+    Object.keys(semaine).forEach((k) => {
+      if (cibles.has(k)) return;
+      const r = recetteDeCase(semaine[k]);
+      if (!r) return;
+      utilises.add(r.id);
+      const g = genrePlat(r);
+      if (g !== "autre") genresPoses[g] = (genresPoses[g] || 0) + 1;
+    });
+  }
 
   if (!etat.repas[cleSem]) etat.repas[cleSem] = {};
 
@@ -3878,6 +4180,11 @@ function genererMenus(cleSem, opt) {
       let s = Math.random() * 1.5;
       const cat = categorieRepas(r);
       if (utilises.has(r.id)) s -= 40;
+      /* « Autre idée » : jamais le plat qu'on vient d'ecarter. */
+      if (cibles) {
+        const a = recetteDeCase(avant[c.jour + "-" + c.moment]);
+        if (a && a.id === r.id) s -= 100;
+      }
       if (recents.has(r.id)) s -= 6;
       /* Variété : chaque plat du même genre déjà posé rend le suivant moins
          probable. Le premier est gratuit, le deuxième coûte, le troisième
@@ -3912,7 +4219,15 @@ function genererMenus(cleSem, opt) {
     const gm = genrePlat(meilleur);
     if (gm !== "autre") genresPoses[gm] = (genresPoses[gm] || 0) + 1;
     bilan[categorieRepas(meilleur)]++;
-    etat.repas[cleSem][c.jour + "-" + c.moment] = { recetteId: meilleur.id, texte: "" };
+    const k = c.jour + "-" + c.moment;
+    const nouvelle = { recetteId: meilleur.id, texte: "" };
+    /* En regeneration ciblee, seul le plat change : on garde qui cuisine et
+       qui ne mange pas. (« Ce sont des restes » ne vaut plus pour un autre plat.) */
+    if (cibles && avant[k]) {
+      if (avant[k].cuisinier) nouvelle.cuisinier = avant[k].cuisinier;
+      if ((avant[k].absents || []).length) nouvelle.absents = avant[k].absents.slice();
+    }
+    etat.repas[cleSem][k] = nouvelle;
   });
 
   sauver("repas");
@@ -4643,10 +4958,15 @@ document.addEventListener("click", (e) => {
       const f = b.dataset.valeur;
       const i = ui.filtresRecettes.indexOf(f);
       if (i === -1) ui.filtresRecettes.push(f); else ui.filtresRecettes.splice(i, 1);
+      memoriserListe("tribu:filtresRecettes", ui.filtresRecettes);
       rendre();
       break;
     }
-    case "recettes-filtre-vider": ui.filtresRecettes = []; ui.rechercheRecette = ""; rendre(); break;
+    case "recettes-filtre-vider":
+      ui.filtresRecettes = []; ui.rechercheRecette = "";
+      memoriserListe("tribu:filtresRecettes", ui.filtresRecettes);
+      rendre();
+      break;
     case "recettes-tri": ui.triRecettes = b.dataset.valeur; rendre(); break;
     case "recettes-filtres": ui.filtresOuverts = !ui.filtresOuverts; rendre(); break;
     case "recettes-lettre": {
@@ -4671,9 +4991,23 @@ document.addEventListener("click", (e) => {
     case "admin-objectif": Formulaires.objectif(); break;
     /* `data-semaine` est facultatif : l'accueil peut proposer un repas de la
        semaine précédente, il ne faut pas valider la case d'à côté. */
-    case "repas-fait": Actions.repasFait(b.dataset.semaine || ui.semaine, b.dataset.jour, b.dataset.moment); break;
-    case "repas-valider": Actions.validerRepas(b.dataset.semaine || ui.semaine, b.dataset.jour, b.dataset.moment); break;
-    case "repas-annuler": Actions.annulerRepasFait(b.dataset.semaine || ui.semaine, b.dataset.jour, b.dataset.moment); break;
+    case "repas-fait":
+    case "repas-valider":
+    case "repas-annuler": {
+      const sem = b.dataset.semaine || ui.semaine;
+      const faire = { "repas-fait": Actions.repasFait, "repas-valider": Actions.validerRepas,
+        "repas-annuler": Actions.annulerRepasFait }[a];
+      /* Depuis la fiche du repas, on la redessine une fois l'action faite :
+         rendre() ne met a jour que l'ecran de fond, et le bouton « C'est
+         fait » restait affiche jusqu'a ce qu'on ferme et rouvre la fiche. */
+      const dansFiche = !!b.closest("#feuille");
+      Promise.resolve(faire.call(Actions, sem, b.dataset.jour, b.dataset.moment)).then(() => {
+        if (dansFiche && $("#voile").classList.contains("on") && sem === ui.semaine) {
+          Formulaires.repas(b.dataset.jour, b.dataset.moment);
+        }
+      });
+      break;
+    }
     case "repas-reserve": Formulaires.consommerRepas(b.dataset.jour, b.dataset.moment); break;
 
     case "cadeau-demander": Actions.demanderCadeau(v); break;
@@ -4935,7 +5269,7 @@ async function demarrerVraiment() {
     /* Echec : soit la famille a disparu, soit Firebase refuse l'accès.
        Dans le second cas on l'explique au lieu de renvoyer bêtement au départ. */
     if (Store.derniereErreur && Store.derniereErreur.code === "permission-denied") {
-      ecranPanne(Store.derniereErreur, "Accès refusé");
+      accesPerdu(s.code);          // même écran neutre qu'en cours d'utilisation (étape 3)
       return;
     }
     /* UNE PANNE N'EST PAS UN DEPART.
@@ -4949,7 +5283,9 @@ async function demarrerVraiment() {
        On la garde. L'ecran d'accueil affiche le bandeau de panne et son bouton
        « Reessayer », et la session repart toute seule des que le reseau est la.
        On n'efface que si la famille est vraiment introuvable, serveur joignable. */
-    if (!(Store.mode === "local" && Store.raison === "erreur")) ecrireSession(null);
+    if (!(Store.mode === "local" && (Store.raison === "erreur" || Store.raison === "stockage"))) {
+      ecrireSession(null);
+    }
   }
   $("#ecran-connexion").hidden = false;
   Connexion.aller("accueil");

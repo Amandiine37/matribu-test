@@ -229,9 +229,23 @@ textarea{min-height:80px;resize:vertical;}
   background:var(--accent);border-color:var(--accent);color:var(--accent-ink);
   box-shadow:0 2px 6px rgba(44,42,36,.12);
 }
-/* Dans un choix unique, l'option deja retenue n'est pas une action : pas de
-   main au survol, pas d'enfoncement au clic. */
-.puces.unique .puce.on{cursor:default;}
+/* Choix unique (« Pour qui ? », durée, rôle…) : on le dessine comme une
+   liste d'options, pas comme des boutons. Un rond vide devant chaque option,
+   un rond plein et une teinte douce pour celle qui est retenue. Le vert plein
+   reste réservé aux vrais boutons (« Créer l'invitation »), sinon l'option
+   retenue donnait envie de cliquer dessus. Les émojis restent dans le texte. */
+.puces.unique .puce::before{
+  content:"";flex:none;width:.72rem;height:.72rem;border-radius:50%;
+  box-sizing:border-box;border:1.5px solid var(--ink-muted);
+}
+.puces.unique .puce.on{
+  background:var(--accent-soft);border-color:var(--accent);color:var(--accent-strong);
+  box-shadow:none;cursor:default;
+}
+.puces.unique .puce.on::before{
+  border-color:var(--accent);background:var(--accent);
+  box-shadow:inset 0 0 0 2px var(--accent-soft);
+}
 .puces.unique .puce.on:active{transform:none;}
 
 /* Un interrupteur à segments : pour les bascules « soit l'un, soit l'autre ».
@@ -337,6 +351,7 @@ textarea{min-height:80px;resize:vertical;}
 .voile.on{opacity:1;pointer-events:auto;}
 .feuille{
   width:100%;max-width:540px;max-height:88dvh;overflow-y:auto;
+  overscroll-behavior:contain;   /* arrivé au bout, le geste ne fait pas défiler la page derrière */
   background:var(--surface);
   border-radius:22px 22px 0 0;
   padding:1rem 1.1rem calc(1.3rem + env(safe-area-inset-bottom));
@@ -344,6 +359,16 @@ textarea{min-height:80px;resize:vertical;}
   box-shadow:var(--shadow-lg);
 }
 .voile.on .feuille{transform:none;}
+/* Page figée tant qu'une feuille est ouverte (figerPage / libererPage dans
+   app.js). Sans cela, sur téléphone, la page de derrière défilait sous la
+   feuille : la barre d'adresse se repliait, la hauteur d'écran changeait et
+   la feuille glissait vers le bas, emportant ses boutons (bug du 11/09/2026). */
+/* height:auto : la page garde sa vraie hauteur. Avec la hauteur d'écran
+   (html,body{height:100%}), remontée de N pixels, elle laissait un vide en bas. */
+body.feuille-ouverte{position:fixed;left:0;right:0;height:auto;}
+@media print{
+  body.feuille-ouverte{position:static !important;top:auto !important;overflow:visible !important;}
+}
 .feuille-poignee{
   width:40px;height:4px;border-radius:999px;background:var(--border);
   margin:0 auto .9rem;
@@ -391,10 +416,20 @@ textarea{min-height:80px;resize:vertical;}
 .pin-points{display:flex;gap:.55rem;justify-content:center;margin:1.1rem 0 1.3rem;}
 .pin-point{width:14px;height:14px;border-radius:999px;border:2px solid var(--border);}
 .pin-point.on{background:var(--accent);border-color:var(--accent);}
-.clavier{display:grid;grid-template-columns:repeat(3,1fr);gap:.55rem;max-width:270px;margin:0 auto;}
+/* Le clavier du code. Safari sur iPhone (surtout depuis l'icône) le
+   decalait : ses boutons gardent une largeur minimale et un style propres,
+   et des colonnes « 1fr » peuvent alors deborder de la grille. D'ou les
+   colonnes bornees (minmax(0,1fr)), l'apparence neutralisee, les chiffres
+   centres explicitement, et une hauteur minimale si aspect-ratio manque. */
+.clavier{
+  display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:.55rem;
+  width:100%;max-width:270px;margin:0 auto;
+}
 .clavier button{
-  aspect-ratio:1.6;border-radius:var(--radius);border:1px solid var(--border);
-  background:var(--surface);font-size:1.25rem;font-weight:600;
+  -webkit-appearance:none;appearance:none;min-width:0;margin:0;padding:0;
+  display:flex;align-items:center;justify-content:center;
+  aspect-ratio:1.6;min-height:2.9rem;border-radius:var(--radius);border:1px solid var(--border);
+  background:var(--surface);color:var(--ink);font-size:1.25rem;font-weight:600;
 }
 .clavier button.vide{background:none;border:none;box-shadow:none;}
 

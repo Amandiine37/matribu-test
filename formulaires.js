@@ -604,9 +604,20 @@ Formulaires.repas = function (jour, moment) {
       "posée, le générateur la laissera tranquille et rien n'ira dans les courses.</p>";
   }
 
+  /* « 🎲 Autre idée » : refait CE repas avec les reglages memorises du
+     generateur, sans toucher au reste de la semaine. Pas pour une absence, ni
+     pour un repas deja cuisine. */
+  const autreIdee = !estAbsence(actuel) && e.statut !== "fait" && e.statut !== "valide";
   h += '<div class="sous-titre" style="margin-top:.2rem"><h3>' +
     (actuel && !estAbsence(actuel) ? "Changer le plat" : "Choisir un plat") + "</h3></div>" +
-    '<input type="text" id="rech-repas" placeholder="Rechercher un plat…" autocomplete="off" style="margin-bottom:.8rem">' +
+    (autreIdee
+      ? '<button class="btn plein doux" data-role="autre-idee" style="margin-bottom:.35rem">🎲 ' +
+        (actuel && actuel.recetteId ? "Autre idée de plat" : "Proposer un plat") + "</button>" +
+        '<p class="aide" style="margin:0 0 .8rem">Selon vos réglages du générateur : ' +
+        esc(resumeReglagesGenerateur()) + ".</p>"
+      : "") +
+    '<div id="filtres-repas"></div>' +
+    '<input type="text" id="rech-repas" placeholder="Rechercher un plat ou un ingrédient…" autocomplete="off" style="margin-bottom:.6rem">' +
     '<div id="liste-repas" style="max-height:36dvh;overflow-y:auto;margin-bottom:.9rem"></div>' +
     "<hr class=\"sep\">" +
     '<label class="champ"><span>Ou écrire librement</span>' +
@@ -621,13 +632,57 @@ Formulaires.repas = function (jour, moment) {
     h, (f) => {
       const zone = f.querySelector("#liste-repas");
       const rech = f.querySelector("#rech-repas");
+
+      /* Les mêmes filtres que le cahier de recettes, gardés sur l'appareil
+         (au départ : ceux du générateur). Repliés, on ne voit que ceux qui
+         sont actifs, pour ne pas repousser la liste hors de l'écran. */
+      let filtres = filtresChoixPlat();
+      let filtresOuverts = false;
+      const zoneF = f.querySelector("#filtres-repas");
+      const puceFiltre = (v, libelle, on) =>
+        '<button type="button" class="puce ' + (on ? "on" : "") + '" data-filtre-plat="' + esc(v) + '">' +
+        libelle + (on && !filtresOuverts ? " ✕" : "") + "</button>";
+      const dessinerFiltres = () => {
+        zoneF.innerHTML = '<div class="puces" style="margin-bottom:.5rem">' +
+          '<button type="button" class="puce" data-role="ouvrir-filtres">🔎 ' +
+          (filtresOuverts ? "Replier" : "Filtres") + "</button>" +
+          (filtresOuverts
+            ? filtresRecettesBase().map(([v, l]) => puceFiltre(v, l, filtres.includes(v))).join("") +
+              PROFILS_SANTE.map((p) => puceFiltre("sante:" + p.val, p.emoji + " " + esc(p.nom),
+                filtres.includes("sante:" + p.val))).join("")
+            : filtres.map((v) => puceFiltre(v, nomFiltreRecette(v), true)).join("")) +
+          "</div>" +
+          (filtresOuverts
+            ? '<button type="button" class="lien" data-role="filtres-generateur" style="margin:-.2rem 0 .6rem">' +
+              "↺ Reprendre les filtres du générateur</button>"
+            : "");
+      };
+      zoneF.onclick = (ev) => {
+        if (ev.target.closest('[data-role="ouvrir-filtres"]')) {
+          filtresOuverts = !filtresOuverts; dessinerFiltres(); return;
+        }
+        if (ev.target.closest('[data-role="filtres-generateur"]')) {
+          filtres = filtresDepuisGenerateur();
+        } else {
+          const p = ev.target.closest("[data-filtre-plat]");
+          if (!p) return;
+          const v = p.dataset.filtrePlat;
+          filtres = filtres.includes(v) ? filtres.filter((x) => x !== v) : filtres.concat([v]);
+        }
+        memoriserListe("tribu:filtresChoixPlat", filtres);
+        dessinerFiltres();
+        dessiner();
+      };
+      dessinerFiltres();
+
       const dessiner = () => {
         /* Même tolérance que dans le cahier de recettes : « pates » trouve
-           « Pâtes », personne ne tape les accents sur un téléphone. */
-        const q = pourChercher(rech.value).trim();
-        const l = liste.filter((x) => !q || pourChercher(x.nom).includes(q));
+           « Pâtes », personne ne tape les accents sur un téléphone. La
+           recherche porte aussi sur les ingrédients. */
+        const l = liste.filter((x) => recetteCorrespond(x, rech.value, filtres));
         zone.innerHTML = l.length
-          ? l.map((x) => '<button class="ligne" data-recette="' + x.id + '" ' +
+          ? '<p class="aide" style="margin:0 0 .3rem">' + l.length + " plat" + (l.length > 1 ? "s" : "") + "</p>" +
+            l.map((x) => '<button class="ligne" data-recette="' + x.id + '" ' +
             'style="width:100%;background:none;border:none;border-top:1px solid var(--border);text-align:left">' +
             '<span style="font-size:1.3rem">' + esc(x.emoji || "🍽️") + "</span>" +
             '<span class="ligne-corps"><b>' + esc(x.nom) + "</b><small>" +
@@ -641,6 +696,20 @@ Formulaires.repas = function (jour, moment) {
       };
       dessiner();
       rech.oninput = dessiner;
+
+      const bAutre = f.querySelector('[data-role="autre-idee"]');
+      if (bAutre) bAutre.onclick = () => {
+        const g = reglagesGenerateur();
+        const res = genererMenus(ui.semaine, Object.assign({}, g,
+          { rapideSemaine: g.rapide, cibles: [{ jour: jour, moment: moment }] }));
+        if (!res) return;
+        const nv = (etat.repas[ui.semaine] || {})[jour + "-" + moment];
+        const r = nv && nv.recetteId ? etat.recettes.find((x) => x.id === nv.recetteId) : null;
+        toast("🎲 " + (r ? (r.emoji || "🍽️") + " " + r.nom : "Nouveau plat"));
+        /* On reste sur la fiche : on relance jusqu'a trouver son bonheur. */
+        Formulaires.repas(jour, moment);
+      };
+
       zone.onclick = (ev) => {
         const b = ev.target.closest("[data-recette]");
         if (!b) return;
@@ -837,6 +906,39 @@ function reglagesGenerateur() {
   let lu = {};
   try { lu = JSON.parse(localStorage.getItem("tribu:generateur") || "{}") || {}; } catch (e) { lu = {}; }
   return Object.assign({}, REGLAGES_GEN_DEFAUT, lu);
+}
+
+/* Les filtres de la liste « Changer le plat » d'un repas, gardés sur
+   l'appareil. La première fois, ils reprennent ceux du générateur : on ne
+   perd pas son filtre en passant de « 🎲 Autre idée » au choix à la main. */
+function filtresDepuisGenerateur() {
+  const g = reglagesGenerateur();
+  const f = ["plat"];                     // le générateur ne pose jamais de dessert
+  if (g.saisons) f.push("saison");
+  if (g.thermomix) f.push("thermomix");
+  if (g.regime === "vege") f.push("vege");
+  if (g.profil) f.push("sante:" + g.profil);
+  return f;
+}
+function filtresChoixPlat() {
+  return lireListeMemorisee("tribu:filtresChoixPlat") || filtresDepuisGenerateur();
+}
+
+/* Les reglages du generateur en quelques mots, affiches sous « 🎲 Autre
+   idée » : on sait sur quoi repose la proposition. */
+function resumeReglagesGenerateur() {
+  const g = reglagesGenerateur();
+  const l = [];
+  if (g.regime === "vege") l.push("végétarien");
+  else if (g.regime === "sansViande") l.push("sans viande");
+  const p = g.profil ? infoProfil(g.profil) : null;
+  if (p) l.push(p.nom.toLowerCase());
+  if (g.saisons) l.push("de saison");
+  if (g.thermomix) l.push("Thermomix de préférence");
+  if (g.rapide) l.push("rapide en semaine");
+  if (g.soirLeger) l.push("léger le soir");
+  if (g.reserve) l.push("ma réserve d’abord");
+  return l.length ? l.join(", ") : "aucun filtre";
 }
 
 Formulaires.generateur = function () {
@@ -1418,6 +1520,12 @@ Formulaires.membre = async function (mid) {
     '<input type="tel" name="pin" inputmode="numeric" maxlength="4" placeholder="' + (m ? "••••" : "1234") + '">' +
     "</label></div>" +
 
+    /* Ses appareils connectés, et le moyen d'en retirer un (étape 2). */
+    (m && Store.mode === "nuage" && !m.sansAppareil
+      ? '<button type="button" class="btn plein doux" data-role="appareils" data-compte-appareils="' +
+        esc(m.id) + '" style="margin:.4rem 0 .2rem">' +
+        "📋 Appareils de " + esc(m.prenom) + " (" + appareilsDe(m.id).length + ")</button>"
+      : "") +
     boutonsFormulaire(m ? "Enregistrer" : "Ajouter", !!m && etat.membres.length > 1) + "</form>";
 
   ouvrirFeuille(m ? "Modifier " + m.prenom : "Nouveau membre", html, (f) => {
@@ -1425,6 +1533,9 @@ Formulaires.membre = async function (mid) {
     brancherMulti(f, "role", true);
 
     brancherMulti(f, "connexion", true);
+
+    const bAppareils = f.querySelector('[data-role="appareils"]');
+    if (bAppareils) bAppareils.onclick = () => Formulaires.appareils(m.id);
 
     /* Un profil sans téléphone n'a besoin ni de rôle ni de code. */
     const caseSans = f.querySelector("#case-sans-appareil");
@@ -1665,6 +1776,12 @@ Formulaires.invitation = function () {
         const r = await Store.envoyerLienConnexion(compteCible.adresse);
         be.disabled = false;
         if (r.ok) {
+          /* Vous vous l'envoyez à vous-même : on retient VOTRE adresse, comme
+             « Me connecter par e-mail », et le lien s'ouvrira sans rien
+             redemander dans ce navigateur. Pour quelqu'un d'autre, on ne garde
+             que « un lien est parti d'ici », jamais son adresse. */
+          if (moi && compteCible.membre === moi.id) Store.retenirEmail(compteCible.adresse);
+          else Store.marquerLienEnvoyeIci();
           be.textContent = "✅ Envoyé à " + compteCible.adresse;
           be.classList.remove("principal");
           toast("Lien envoyé 💌");
@@ -1972,6 +2089,11 @@ Formulaires.menuProfil = function () {
       ? '<button class="btn plein" data-action="aller" data-vue="admin" style="margin-bottom:.5rem">⚙️ Administration</button>'
       : "") +
     '<button class="btn plein" data-action="mon-appareil" style="margin-bottom:.5rem">📱 Connecter un appareil</button>' +
+    (Store.mode === "nuage"
+      ? '<button class="btn plein" data-role="mes-appareils" data-compte-appareils="' + esc(moi.id) +
+        '" style="margin-bottom:.5rem">📋 Mes appareils (' +
+        appareilsDe(moi.id).length + ")</button>"
+      : "") +
     '<button class="btn plein" data-action="theme" style="margin-bottom:.5rem">🌓 Thème : ' + nomTheme + "</button>" +
     '<button class="btn plein" data-role="mon-profil" style="margin-bottom:.5rem">✏️ Modifier mon profil</button>' +
     "<hr class=\"sep\">" +
@@ -1979,6 +2101,10 @@ Formulaires.menuProfil = function () {
     "🐞 Signaler un problème / proposer une idée</button>" +
     '<button class="btn plein doux" data-action="effacer-appareil" style="margin-bottom:.5rem">' +
     "🧹 Effacer les données de cet appareil</button>" +
+    (Store.mode === "nuage"
+      ? '<button class="btn plein doux" data-role="quitter-tribu" style="margin-bottom:.5rem">' +
+        "🚪 Quitter la tribu sur cet appareil</button>"
+      : "") +
     '<p class="aide centre" style="margin-bottom:.8rem">Version ' + esc(VERSION) +
     " — merci de vos retours !<br>" +
     /* Obligation légale dès lors que d autres familles que la sienne
@@ -1988,6 +2114,10 @@ Formulaires.menuProfil = function () {
     '<button class="btn plein danger" data-action="deconnexion">Changer de membre / se déconnecter</button>';
 
   ouvrirFeuille("Mon profil", html, (f) => {
+    const bMesAppareils = f.querySelector('[data-role="mes-appareils"]');
+    if (bMesAppareils) bMesAppareils.onclick = () => Formulaires.appareils(moi.id);
+    const bQuitter = f.querySelector('[data-role="quitter-tribu"]');
+    if (bQuitter) bQuitter.onclick = () => Formulaires.quitterTribu();
     f.querySelector('[data-role="mon-profil"]').onclick = () => {
       if (estAdmin()) { Formulaires.membre(moi.id); return; }
       Formulaires.monProfilSimple();
@@ -1995,6 +2125,154 @@ Formulaires.menuProfil = function () {
     f.querySelectorAll('[data-action="aller"], [data-action="maj-liste"]').forEach((b) => {
       b.addEventListener("click", fermerFeuille);
     });
+  });
+};
+
+/* ===================== QUITTER LA TRIBU SUR CET APPAREIL (étape 4) =====================
+
+   Cet appareil seul quitte la tribu : il est retiré comme depuis la liste des
+   appareils (registre, listes d'accès, révoqués), puis il oublie tout ce que
+   Ma Tribu garde ici et reçoit une identité neuve. Le membre, ses points et
+   ses autres appareils ne changent pas. Jamais le dernier appareil
+   administrateur : plus personne ne pourrait gérer la tribu (les règles le
+   refusent aussi). */
+Formulaires.quitterTribu = async function () {
+  if (Store.mode !== "nuage" || !moi) return;
+  const admins = etat.adminsUid || [];
+  if (admins.indexOf(Store.uid) !== -1 && admins.length <= 1) {
+    ouvrirFeuille("Quitter la tribu sur cet appareil",
+      '<div class="bandeau">🔑<div><b>C’est le seul appareil administrateur de la tribu.</b> ' +
+      "S’il part, plus personne ne pourra la gérer. Donnez d’abord les droits " +
+      "d’administrateur à un autre appareil : une invitation « administrateur », ou le lien " +
+      "e-mail d’un adulte administrateur.</div></div>" +
+      '<button class="btn plein" data-action="fermer" style="margin-top:1rem">Compris</button>');
+    return;
+  }
+  const nom = (etat.famille && etat.famille.nom) || "la tribu";
+  const autres = appareilsDe(moi.id).filter((a) => !a.ici).length;
+  const ok = await confirmer("Cet appareil quittera « " + nom + " ». Votre profil, vos points" +
+    (autres === 0 ? "" : autres === 1 ? " et votre autre appareil" : " et vos " + autres + " autres appareils") +
+    " ne changent pas. Pour revenir ici plus tard, il faudra une nouvelle invitation, " +
+    "ou le lien e-mail si votre adresse est enregistrée.",
+    { titre: "Quitter la tribu sur cet appareil", ok: "Quitter", danger: true });
+  if (!ok) return;
+  /* Plus d'écoute AVANT de se retirer : sinon le refus qui suit ouvrirait
+     l'écran « accès perdu » au lieu de terminer proprement. */
+  Store._detacher();
+  const r = await Store.retirerAppareil(Store.uid);
+  if (!r.ok) {
+    toast(r.message);
+    Store.abonner(Store.code, Store._cbAbonnement);
+    return;
+  }
+  await Store.oublierCetAppareil();
+  toast("Cet appareil a quitté la tribu");
+  setTimeout(() => { location.href = adresseNette(); }, 700);
+};
+
+/* ================================ APPAREILS (étape 2) ================================
+
+   Les appareils rattachés à un membre, et le moyen d'en retirer un : téléphone
+   perdu, tablette donnée, ordinateur de bureau quitté. Un administrateur voit
+   ceux de chacun ; un membre voit les siens et peut retirer ses AUTRES
+   appareils sans déranger personne (parcours P7). L'appareil qu'on tient en
+   main n'est pas retirable d'ici : ce sera « Quitter la tribu sur cet
+   appareil » (étape 4). */
+Formulaires.appareils = function (membreId) {
+  const m = membre(membreId);
+  if (!m) return;
+  const lesMiens = !!(moi && moi.id === membreId);
+  if (!estAdmin() && !lesMiens) return;
+
+  const actifs = appareilsDe(membreId);
+  const retires = appareilsRetiresDe(membreId);
+  const PAR = { creation: "création de la tribu", invitation: "code d’invitation", compte: "lien e-mail" };
+  const date = (iso) => {
+    const d = iso ? new Date(iso) : null;
+    return d && !isNaN(d) ? d.toLocaleDateString("fr-FR", { day: "numeric", month: "long", year: "numeric" }) : "";
+  };
+  const icone = (type) => /iPhone|Android|iPad/.test(type || "") ? "📱"
+    : /Mac|Windows|Linux/.test(type || "") ? "💻" : "🔹";
+
+  const ligne = (a) => '<div class="ligne">' +
+    '<span style="font-size:1.3rem">' + icone(a.type) + "</span>" +
+    '<div class="ligne-corps"><b>' + esc(a.type) +
+    (a.ici ? ' <span class="etiquette vert">cet appareil</span>' : "") +
+    (a.admin ? ' <span class="etiquette">admin</span>' : "") + "</b><small>" +
+    (a.ajouteLe
+      ? "Ajouté le " + esc(date(a.ajouteLe)) + (PAR[a.par] ? " • par " + PAR[a.par] : "")
+      : "Ajouté avant la version 0.50") + "</small></div>" +
+    /* Le bouton n'apparaît que si le retrait est permis : jamais sur
+       l'appareil qu'on tient (étape 4), ni sur le dernier appareil
+       administrateur de la tribu (les règles le refusent). */
+    (a.ici ? ""
+      : a.admin && (etat.adminsUid || []).length <= 1
+        ? '<small class="aide" style="margin:0;text-align:right;line-height:1.3">Seul appareil<br>administrateur</small>'
+        : '<button class="btn mini danger" data-retirer="' + esc(a.uid) + '">Retirer</button>') +
+    "</div>";
+
+  const html =
+    '<div data-feuille-appareils="' + esc(membreId) + '" hidden></div>' +   // repère pour rafraichirAppareils
+    '<p class="aide" style="margin-bottom:.8rem">Chaque téléphone, tablette ou ordinateur ' +
+    "connecté à ce profil. Retirer un appareil lui coupe <b>tout de suite</b> l’accès à la " +
+    "tribu, <b>pour de bon</b> : utile pour un téléphone perdu ou donné.</p>" +
+    (actifs.length ? actifs.map(ligne).join("")
+      : '<p class="aide">Aucun appareil n’est connecté à ce profil.</p>') +
+    (retires.length
+      ? '<div class="sous-titre" style="margin-top:1rem"><h3>Appareils retirés</h3></div>' +
+        retires.map((r) => '<div class="ligne"><span style="font-size:1.3rem">🚫</span>' +
+          '<div class="ligne-corps"><b>' + esc(r.type || "Appareil") + "</b><small>Retiré le " +
+          esc(date(r.le)) + (r.par && membre(r.par) ? " par " + esc(membre(r.par).prenom) : "") +
+          "</small></div></div>").join("")
+      : "") +
+    '<button class="btn plein" data-action="fermer" style="margin-top:1rem">Fermer</button>';
+
+  ouvrirFeuille(lesMiens ? "Mes appareils" : "Appareils de " + m.prenom, html, (f) => {
+    f.querySelectorAll("[data-retirer]").forEach((b) => {
+      b.onclick = async () => {
+        const uid = b.dataset.retirer;
+        const a = actifs.find((x) => x.uid === uid);
+        /* Jamais le dernier appareil administrateur : plus personne ne
+           pourrait gérer la tribu (les règles le refusent aussi). */
+        const admins = etat.adminsUid || [];
+        if (admins.indexOf(uid) !== -1 && admins.length <= 1) {
+          toast("C’est le seul appareil administrateur de la tribu : il ne peut pas être retiré.");
+          return;
+        }
+        const ok = await confirmer("Retirer « " + (a ? a.type : "cet appareil") + " » ? Il perdra " +
+          "tout de suite l’accès à la tribu, et ne pourra plus y revenir tel quel.",
+          { titre: "Retirer cet appareil", ok: "Retirer", danger: true });
+        if (ok) {
+          const r = await Store.retirerAppareil(uid);
+          toast(r.ok ? "Appareil retiré 🚫" : r.message);
+        }
+        Formulaires.appareils(membreId);    // la fiche reflète le nouvel état
+      };
+    });
+  });
+};
+
+/* Quand le serveur change, rendre() ne redessine que l'écran de fond : une
+   fenêtre ouverte gardait d'anciens nombres (« Mes appareils (3) » alors qu'il
+   y en avait 4). Appelée à chaque changement du document de la famille :
+   - la liste des appareils se redessine en entier (rien à y saisir), à la
+     même hauteur de défilement ;
+   - ailleurs, seul le nombre des boutons « Mes appareils » / « Appareils de … »
+     est corrigé : le reste de la fiche peut être en cours de saisie.
+   Une confirmation ouverte par-dessus n'a pas ces repères : elle n'est pas touchée. */
+Formulaires.rafraichirAppareils = function () {
+  if (!document.querySelector("#voile").classList.contains("on")) return;
+  const f = document.querySelector("#feuille");
+  const liste = f.querySelector("[data-feuille-appareils]");
+  if (liste) {
+    const haut = f.scrollTop;
+    Formulaires.appareils(liste.dataset.feuilleAppareils);
+    f.scrollTop = haut;
+    return;
+  }
+  f.querySelectorAll("[data-compte-appareils]").forEach((b) => {
+    const n = appareilsDe(b.dataset.compteAppareils).length;
+    b.textContent = b.textContent.replace(/\(\d+\)\s*$/, "(" + n + ")");
   });
 };
 
@@ -2818,7 +3096,14 @@ Formulaires.bilanSemaine = function (cleSem) {
 
 Formulaires.effacerAppareil = function () {
   const partage = Store.mode === "nuage";
-  const cles = Object.keys(localStorage).filter((k) => k.indexOf("tribu:") === 0);
+  /* En partage, on GARDE le repère de la tribu : l'appareil reste membre
+     (sa session n'est pas retirée) et l'écran promet qu'on pourra rechoisir
+     son profil. Sans ce repère, l'application oubliait quelle tribu ouvrir :
+     plus de « Continuer sur cet appareil », et l'invitation était refusée
+     puisque l'appareil était déjà inscrit — une impasse (11/09/2026). */
+  const garde = partage ? ["tribu:derniereFamille"] : [];
+  const cles = Object.keys(localStorage)
+    .filter((k) => k.indexOf("tribu:") === 0 && garde.indexOf(k) === -1);
   const familleLocale = cles.filter((k) => k.indexOf("tribu:donnees:") === 0);
 
   const detail = partage
@@ -2829,7 +3114,9 @@ Formulaires.effacerAppareil = function () {
       "<li>le profil avec lequel vous êtes connecté (il faudra le rechoisir et " +
       "retaper votre code à 4 chiffres) ;</li>" +
       "<li>vos préférences : thème, dernier onglet, bandeaux masqués ;</li>" +
-      "<li>l'adresse e-mail éventuellement en attente de connexion.</li></ul>"
+      "<li>l'adresse e-mail éventuellement en attente de connexion.</li></ul>" +
+      "<p>Pour revenir, touchez <b>« Continuer sur cet appareil »</b> sur l'écran " +
+      "d'accueil : seul le repère de la tribu est gardé pour cela.</p>"
     : '<div class="bandeau">🔴<div><b>Attention : il n\'y a pas de copie ailleurs.</b><br>' +
       "Cette application fonctionne <b>hors partage</b> : ce téléphone est le seul " +
       "endroit où votre famille existe. Tout sera perdu — membres, tâches, points, " +
@@ -2863,7 +3150,7 @@ Formulaires.effacerAppareil = function () {
         if (mot !== "EFFACER") { toast("Recopiez EFFACER pour confirmer"); return; }
       }
       Object.keys(localStorage)
-        .filter((k) => k.indexOf("tribu:") === 0)
+        .filter((k) => k.indexOf("tribu:") === 0 && garde.indexOf(k) === -1)
         .forEach((k) => { try { localStorage.removeItem(k); } catch (e) { } });
       fermerFeuille();
       toast("Données effacées de cet appareil");

@@ -80,6 +80,22 @@ function bandeauAdminSansDroits() {
 function bandeauModeLocal() {
   if (Store.mode !== "local") return "";
 
+  /* La mémoire du navigateur ne répond pas : Firebase ne peut même pas
+     relire la session de cet appareil. Avant, le démarrage restait bloqué
+     sans rien dire. */
+  if (Store.raison === "stockage") {
+    return '<div class="bandeau">🔒<div><b>Le navigateur ne donne pas accès à sa mémoire.</b><br>' +
+      "Ma Tribu ne peut pas retrouver la session de cet appareil. " +
+      "<b>Rien n'est perdu</b> : votre famille est intacte sur le serveur.<br><br>" +
+      "<b>À essayer :</b> fermez les autres onglets ou fenêtres de Ma Tribu, puis " +
+      "réessayez. En navigation privée, ouvrez plutôt Ma Tribu dans une fenêtre " +
+      "normale. Si votre téléphone manque de place, libérez-en un peu.<br><br>" +
+      "<b>Ne créez pas de famille maintenant</b> : elle serait séparée de la vôtre." +
+      '<div class="rangee-btn" style="margin-top:.6rem">' +
+      '<button class="btn mini principal" data-action="reessayer">Réessayer</button>' +
+      "</div></div></div>";
+  }
+
   if (Store.raison === "erreur") {
     return '<div class="bandeau">📡<div><b>Mode temporaire hors connexion.</b><br>' +
       "Cet appareil n'arrive pas à joindre le serveur — réseau coupé, ou panne " +
@@ -859,15 +875,14 @@ function caseRepas(jour, moment, contenu) {
 
 /* ================================ RECETTES ================================ */
 
-Vues.recettes = function () {
-  const h = [];
-  h.push('<input type="text" id="champ-recherche-recette" placeholder="Rechercher un plat ou un ingrédient…" ' +
-    'value="' + esc(ui.rechercheRecette) + '" autocomplete="off" style="margin-bottom:.7rem">');
-
+/* Les filtres de plats et leurs noms, communs au cahier de recettes et à la
+   liste « Changer le plat » d'un repas. */
+function filtresRecettesBase() {
   const s = infoSaison(saisonActuelle());
-  const filtres = [
+  return [
     ["saison", s.emoji + " De saison"],
     ["thermomix", "🍲 Thermomix"],
+    ["monde", "🌍 Du monde"],
     ["perso", "✍️ Mes recettes"],
     ["vege", "🌿 Végé"],
     ["rapide", "⚡ Rapide"],
@@ -875,14 +890,23 @@ Vues.recettes = function () {
     ["plat", "🍽️ Plats"],
     ["dessert", "🍰 Desserts"]
   ];
-  const nomFiltre = (v) => {
-    if (v.indexOf("sante:") === 0) {
-      const p = infoProfil(v.slice(6));
-      return p ? p.emoji + " " + p.nom : v;
-    }
-    const f = filtres.find((x) => x[0] === v);
-    return f ? f[1] : v;
-  };
+}
+function nomFiltreRecette(v) {
+  if (v.indexOf("sante:") === 0) {
+    const p = infoProfil(v.slice(6));
+    return p ? p.emoji + " " + p.nom : v;
+  }
+  const f = filtresRecettesBase().find((x) => x[0] === v);
+  return f ? f[1] : v;
+}
+
+Vues.recettes = function () {
+  const h = [];
+  h.push('<input type="text" id="champ-recherche-recette" placeholder="Rechercher un plat ou un ingrédient…" ' +
+    'value="' + esc(ui.rechercheRecette) + '" autocomplete="off" style="margin-bottom:.7rem">');
+
+  const filtres = filtresRecettesBase();
+  const nomFiltre = nomFiltreRecette;
 
   /* Les filtres se sont multipliés : quatre rangées de puces, c'était 600
      pixels avant la première recette — les trois quarts d'un écran de
@@ -1259,8 +1283,13 @@ Vues.admin = function () {
     "Revoir les premiers pas sur l'accueil</button>"));
 
   h.push(bloc("📱 Appareils autorisés",
-    '<p class="aide">' + (etat.membresUid || []).length + " appareil(s) peuvent ouvrir cette famille. " +
-    "Un appareil perd son accès s'il efface les données du navigateur : il faudra alors une nouvelle invitation.</p>" +
+    '<p class="aide">' + ((etat.membresUid || []).length > 1
+      ? (etat.membresUid || []).length + " appareils peuvent"
+      : (etat.membresUid || []).length + " appareil peut") + " ouvrir cette famille. " +
+    "Si les données du navigateur d'un appareil sont vidées, il perd son accès : un adulte " +
+    "dont l'adresse e-mail est enregistrée revient avec le lien e-mail, les autres ont besoin " +
+    "d'une nouvelle invitation. L'ancien appareil reste compté tant qu'on ne l'a pas retiré " +
+    "(fiche du membre ▸ Appareils).</p>" +
     '<p class="aide" style="margin-top:.5rem">💡 Prévoyez <b>deux administrateurs</b> : si le seul ' +
     "administrateur perd son accès, plus personne ne peut valider les tâches.</p>"));
 
@@ -1571,20 +1600,51 @@ const Connexion = {
       '<button class="btn principal plein" id="b-retour" style="margin-top:.8rem">Retour à l’accueil</button>';
   },
 
+  /* Étape 3 : cet appareil n'a plus accès à la tribu. Écran neutre : plus
+     rien de la tribu n'est affiché ; on dit ce qui a pu se passer et comment
+     revenir. Rien n'est effacé sans que la personne le choisisse. */
+  accesPerdu(d) {
+    return this.entete("Cet appareil n’a plus accès à la tribu.") +
+      '<div class="bandeau info">🔒<div>Il a sans doute été <b>retiré de la tribu</b> ' +
+      "(depuis la liste des appareils), ou la tribu a été <b>supprimée</b>. " +
+      "Ce qui s’affichait a été effacé de l’écran.</div></div>" +
+      '<p class="aide" style="margin:.9rem 0">Pour revenir dans la tribu : touchez ' +
+      "« Repartir de zéro », puis ouvrez une nouvelle invitation, ou le lien e-mail si " +
+      "votre adresse est enregistrée.</p>" +
+      '<button class="btn principal plein" id="b-repartir">Repartir de zéro sur cet appareil</button>' +
+      '<button class="btn plein" id="b-reessayer-acces" style="margin-top:.6rem">Réessayer</button>' +
+      '<p class="aide" style="margin-top:.9rem;font-size:.8rem">Plus rarement, c’est un réglage ' +
+      "du serveur qui bloque l’accès : « Réessayer » suffira une fois le problème réglé. Rien " +
+      "n’est effacé de cet appareil tant que vous ne choisissez pas « Repartir de zéro ».</p>";
+  },
+
   confirmerEmail(d) {
     const err = Store.erreurEmail
       ? '<div class="bandeau">⚠️<div>' + esc(Store.erreurEmail) + "</div></div>"
       : "";
-    return this.entete("Confirmez votre adresse pour terminer la connexion.") +
+    /* La consigne d'abord, en une phrase ; la raison ensuite, en petit, et
+       c'est la VRAIE raison (Store.emailRetenu la note) : avant, un texte
+       unique parlait d'un « autre appareil », même dans le même navigateur. */
+    const pourquoi = {
+      envoyeIci: "Ce lien a été envoyé depuis la fiche d’invitation : tapez l’adresse " +
+        "de la personne qui l’a reçu.",
+      expire: "Ce lien a été demandé il y a plus d’une heure : par sécurité, l’adresse " +
+        "n’est plus gardée sur cet appareil.",
+      ailleurs: "Ce lien s’est ouvert dans un autre navigateur que celui où vous l’avez " +
+        "demandé (application mail, fenêtre privée, icône Ma Tribu) : il ne connaît pas " +
+        "encore votre adresse."
+    };
+    return this.entete("Dernière étape : votre adresse e-mail") +
       err +
-      '<p class="aide" style="margin-bottom:1rem">Vous avez ouvert votre lien sur un appareil ' +
-      "qui ne l’attendait pas. C’est normal, et c’est une sécurité : le lien seul ne suffit pas. " +
-      "Vous pouvez aussi copier le lien et le coller dans le navigateur d’où vous l’avez demandé.</p>" +
+      '<p class="aide" style="margin-bottom:1rem">Par sécurité, tapez l’adresse à laquelle ' +
+      "vous avez reçu ce lien.</p>" +
       '<form id="f-confirmer-email">' +
       '<label class="champ"><span>Votre adresse e-mail</span>' +
       '<input type="email" name="email" required autocomplete="email" inputmode="email" ' +
       'placeholder="prenom@exemple.fr"></label>' +
       '<button class="btn principal plein" type="submit">Terminer la connexion</button>' +
+      '<p class="aide" id="pourquoi-adresse" style="margin:.8rem 0 0;font-size:.8rem">' +
+      (pourquoi[Store.raisonEmailAbsent] || pourquoi.ailleurs) + "</p>" +
       '<button class="lien" type="button" id="b-retour" style="display:block;margin:1rem auto 0">Annuler</button>' +
       "</form>";
   },
@@ -1676,8 +1736,40 @@ const Connexion = {
       if (br) br.onclick = async () => {
         const code = localStorage.getItem("tribu:derniereFamille");
         const donnees = await Store.charger(code);
-        if (!donnees) { toast("Cet appareil n'a plus accès à cette famille"); return; }
+        if (!donnees) {
+          if (Store.derniereErreur && Store.derniereErreur.code === "permission-denied") {
+            this.aller("accesPerdu", { code: code });
+            return;
+          }
+          toast("Cet appareil n'a plus accès à cette famille");
+          return;
+        }
         this.aller("profils", { code: code, donnees: donnees, jeton: null });
+      };
+    }
+
+    /* Étape 3 : l'écran neutre après une perte d'accès. */
+    if (etape === "accesPerdu") {
+      el.querySelector("#b-reessayer-acces").onclick = async (ev) => {
+        ev.target.disabled = true;
+        const s = lireSession();
+        if (s && s.code && s.membreId) {
+          if (await entrerDansFamille(s.code, s.membreId)) return;
+        } else if (d.code) {
+          const donnees = await Store.charger(d.code);
+          if (donnees) { this.aller("profils", { code: d.code, donnees: donnees, jeton: null }); return; }
+        }
+        ev.target.disabled = false;
+        toast("Toujours pas d’accès à la tribu");
+      };
+      el.querySelector("#b-repartir").onclick = async () => {
+        const ok = await confirmer("Ma Tribu oubliera tout ce qu’elle garde sur cet appareil, qui " +
+          "recevra une nouvelle identité. Il pourra ensuite rejoindre la tribu avec une nouvelle " +
+          "invitation, ou le lien e-mail si votre adresse est enregistrée.",
+          { titre: "Repartir de zéro", ok: "Repartir de zéro", danger: true });
+        if (!ok) return;
+        await Store.oublierCetAppareil();
+        location.href = adresseNette();
       };
     }
 
@@ -1815,6 +1907,24 @@ const Connexion = {
         bouton.disabled = true;
         const r = await Invitations.valider(jeton);
         bouton.disabled = false;
+
+        /* Cet appareil fait DÉJÀ partie de cette tribu (données effacées, tribu
+           oubliée…) : on l'y ramène au lieu de le laisser devant un refus. On
+           n'écrit rien et on ne consomme pas l'invitation — elle reste valable
+           pour l'appareil auquel elle était destinée. Le code à 4 chiffres
+           reste demandé. */
+        if (!r.ok && r.dejaMembre) {
+          const donnees = await Store.charger(r.code);
+          if (donnees) {
+            try { localStorage.setItem("tribu:derniereFamille", r.code); } catch (e) { }
+            toast("Cet appareil fait déjà partie de la tribu 👋");
+            const vise = r.invitation && r.invitation.pour &&
+              (donnees.membres || []).find((m) => m.id === r.invitation.pour);
+            const d = { code: r.code, donnees: donnees, jeton: null };
+            this.aller(vise ? "pin" : "profils", vise ? Object.assign(d, { membre: vise }) : d);
+            return;
+          }
+        }
         if (!r.ok) { toast(r.message); return; }
 
         const inv = r.invitation;
