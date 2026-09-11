@@ -67,7 +67,13 @@ function boutonsFormulaire(labelOk, avecSuppression) {
 Formulaires.tache = function (tid) {
   if (!estAdmin()) return;
   const t = tid ? etat.taches.find((x) => x.id === tid) : null;
-  const cour = t || { emoji: "🧹", frequence: "semaine", points: 10, participants: [], rotation: true, actif: true };
+  /* Une tâche neuve propose TOUT LE MONDE : c'est le cas courant, et cela
+     évite le piège d'une tâche sans participant — elle n'était assignée à
+     personne, donc invisible partout sauf dans l'Administration (12/09/2026). */
+  const cour = t || {
+    emoji: "🧹", frequence: "semaine", points: 10,
+    participants: etat.membres.map((m) => m.id), rotation: true, actif: true
+  };
   const assigne = t ? membre(assigneDe(t, new Date())) : null;
 
   const html = "<form id=\"f-tache\">" +
@@ -2166,8 +2172,10 @@ Formulaires.quitterTribu = async function () {
     return;
   }
   await Store.oublierCetAppareil();
-  toast("Cet appareil a quitté la tribu");
-  setTimeout(() => { location.href = adresseNette(); }, 700);
+  /* Un écran, et non un message fugace : le rechargement emportait le message
+     avant qu'on ait pu le lire. La page ne se recharge qu'au bouton Terminer. */
+  viderEcranTribu();
+  Connexion.aller("tribuQuittee", { nom: nom });
 };
 
 /* ================================ APPAREILS (étape 2) ================================

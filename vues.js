@@ -1299,7 +1299,10 @@ Vues.admin = function () {
         '<div class="ligne"><span style="font-size:1.2rem">' + esc(t.emoji || "🧹") + "</span>" +
         '<div class="ligne-corps"><b>' + esc(t.nom) + "</b><small>" +
         (t.frequence === "jour" ? "chaque jour" : t.frequence === "mois" ? "chaque mois" : "chaque semaine") +
-        " • " + t.points + " pts • " + participantsValides(t).length + " participant(s)" +
+        " • " + t.points + " pts • " +
+        (participantsValides(t).length
+          ? participantsValides(t).length + " participant(s)"
+          : "⚠️ personne : elle n’apparaît nulle part") +
         (t.actif === false ? " • en pause" : "") + "</small></div>" +
         '<button class="btn mini icone" data-action="tache-editer" data-id="' + t.id + '">✏️</button></div>').join("")
       : rienDu("🧹", "Aucune tâche."),
@@ -1618,6 +1621,18 @@ const Connexion = {
       "n’est effacé de cet appareil tant que vous ne choisissez pas « Repartir de zéro ».</p>";
   },
 
+  /* Étape 4 : le départ volontaire est confirmé par un ÉCRAN, et non par un
+     message fugace — le rechargement l'emportait avant qu'on ait pu le lire
+     (constaté par Amandine le 12 septembre 2026). */
+  tribuQuittee(d) {
+    return this.entete("C’est fait : cet appareil a quitté la tribu.") +
+      '<div class="bandeau info">🚪<div>« ' + esc(d.nom || "La tribu") + " » continue sans lui. " +
+      "Votre profil, vos points et vos autres appareils n’ont pas changé.</div></div>" +
+      '<p class="aide" style="margin:.9rem 0">Pour revenir sur cet appareil plus tard : une ' +
+      "nouvelle invitation, ou le lien e-mail si votre adresse est enregistrée.</p>" +
+      '<button class="btn principal plein" id="b-fin-quitter">Terminer</button>';
+  },
+
   confirmerEmail(d) {
     const err = Store.erreurEmail
       ? '<div class="bandeau">⚠️<div>' + esc(Store.erreurEmail) + "</div></div>"
@@ -1746,6 +1761,11 @@ const Connexion = {
         }
         this.aller("profils", { code: code, donnees: donnees, jeton: null });
       };
+    }
+
+    /* Étape 4 : fin du départ volontaire. */
+    if (etape === "tribuQuittee") {
+      el.querySelector("#b-fin-quitter").onclick = () => { location.href = adresseNette(); };
     }
 
     /* Étape 3 : l'écran neutre après une perte d'accès. */

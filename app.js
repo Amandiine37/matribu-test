@@ -1679,6 +1679,19 @@ const Store = {
     }
   },
 
+  /* Date de dernière ouverture de la tribu, à l'heure du SERVEUR. Elle ne
+     sert qu'au ménage : repérer, dans la console, les tribus qui ne servent
+     plus. Une seule date pour toute la tribu, jamais par personne. */
+  async noterOuverture(code) {
+    if (this.mode !== "nuage") return;
+    try {
+      await this._fs.setDoc(this._fs.doc(this._db, "familles", code),
+        { vuLe: this._fs.serverTimestamp() }, { merge: true });
+    } catch (err) {
+      console.warn("Date d'ouverture non enregistrée :", err);
+    }
+  },
+
   async creer(code, donnees) {
     this.derniereErreur = null;
     if (this.mode !== "nuage") { this._ecrireLocal(code, donnees); return true; }
@@ -2462,6 +2475,7 @@ async function entrerDansFamille(code, membreId, opts) {
   ecrireSession({ code: code, membreId: membreId });
   localStorage.setItem("tribu:derniereFamille", code);
   verifierRepere(code);          // en arrière-plan, sans bloquer l'ouverture
+  noterOuverture(code);          // idem : la date du jour, pour le ménage
   majRecettesSiBesoin();         // idem : complète les recettes d'avant
   $("#ecran-connexion").hidden = true;
   $("#ecran-app").hidden = false;
@@ -2503,6 +2517,21 @@ async function verifierRepere(code) {
   } catch (e) { /* sans importance : on réessaiera sur un autre appareil */ }
 }
 
+/* Note la date d'ouverture de la tribu, AU PLUS une fois par jour et par
+   appareil : la date du dernier envoi est gardée sur l'appareil. Sans ce
+   garde-fou, chaque ouverture écrirait dans la tribu pour rien. Un échec est
+   sans importance : la date sera notée à la prochaine ouverture. */
+async function noterOuverture(code) {
+  if (Store.mode !== "nuage") return;
+  const cle = "tribu:vu:" + code;
+  const jour = new Date().toISOString().slice(0, 10);
+  try {
+    if (localStorage.getItem(cle) === jour) return;
+    localStorage.setItem(cle, jour);
+  } catch (e) { /* mémoire du navigateur indisponible : on écrit quand même */ }
+  await Store.noterOuverture(code);
+}
+
 /* Deconnexion : l'appareil reste autorise, on revient juste au choix du profil. */
 async function deconnecter() {
   const code = Store.code || localStorage.getItem("tribu:derniereFamille");
@@ -2534,7 +2563,10 @@ async function deconnecter() {
    tribu : un refus peut aussi venir d'un réglage du serveur. C'est
    « Repartir de zéro », sur cet écran, qui les efface, et seulement si la
    personne le demande. */
-function accesPerdu(code) {
+/* Efface de l'écran tout ce qui vient de la tribu, et repasse sur l'écran de
+   connexion. Sert dans les deux cas : accès perdu (étape 3) et départ
+   volontaire (étape 4). */
+function viderEcranTribu() {
   Store._detacher();
   Store.code = null;
   fermerFeuille();
@@ -2550,6 +2582,10 @@ function accesPerdu(code) {
   $("#fab").hidden = true;
   $("#ecran-app").hidden = true;
   $("#ecran-connexion").hidden = false;
+}
+
+function accesPerdu(code) {
+  viderEcranTribu();
   Connexion.aller("accesPerdu", { code: code });
 }
 
