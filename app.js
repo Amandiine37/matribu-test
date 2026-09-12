@@ -26,8 +26,53 @@
 /* ============================ 1. Outils ============================ */
 
 const $ = (sel) => document.querySelector(sel);
-const RAYONS = ["Fruits & légumes", "Boucherie", "Poissonnerie", "Crèmerie",
-  "Boulangerie", "Épicerie", "Surgelés", "Boissons", "Entretien", "Autre"];
+/* « À catégoriser » vient en TÊTE : c'est là que tombent les produits que
+   l'application n'a pas su reconnaître à la saisie rapide. En premier, on les
+   voit et on les range ; en dernier, ils seraient oubliés. « Autre » reste un
+   choix délibéré, pour ce qui n'entre dans aucun rayon. */
+const RAYONS = ["À catégoriser", "Fruits & légumes", "Boucherie", "Poissonnerie", "Crèmerie",
+  "Boulangerie", "Épicerie", "Surgelés", "Boissons",
+  "Entretien", "Hygiène", "Maison", "Animaux", "Autre"];
+
+/* La réserve se lit en deux côtés : ce qui se mange, et le reste. On ne
+   cherche pas la lessive en pensant au dîner (demande d'Amandine, 12/09/2026).
+   « À catégoriser » et « Autre » n'appartiennent à aucun des deux : ils
+   s'affichent des DEUX côtés, justement pour qu'on les range. */
+const RAYONS_MAISON = ["Entretien", "Hygiène", "Maison", "Animaux"];
+const RAYONS_NEUTRES = ["À catégoriser", "Autre"];
+/* Rayons ajoutés par la famille (Administration ▸ Rayons). Rangés dans les
+   réglages, donc écrits par un administrateur seulement, et valables pour
+   toute la maison. Chacun déclare son côté : alimentaire ou maison. */
+function rayonsPerso() {
+  const l = (etat.reglages && etat.reglages.rayonsPerso) || [];
+  return Array.isArray(l) ? l.filter((r) => r && r.nom) : [];
+}
+function rayonsTous() {
+  const noms = RAYONS.slice();
+  rayonsPerso().forEach((r) => { if (noms.indexOf(r.nom) === -1) noms.push(r.nom); });
+  return noms;
+}
+/* Les rayons d'un écran, dans l'ordre ALPHABÉTIQUE (demande d'Amandine,
+   12/09/2026), sauf « À catégoriser » qui reste en tête : c'est le seul qui
+   demande une action. */
+function ordreRayons(noms) {
+  return noms.slice().sort((a, b) => {
+    if (a === b) return 0;
+    if (a === "À catégoriser") return -1;
+    if (b === "À catégoriser") return 1;
+    return String(a).localeCompare(String(b), "fr");
+  });
+}
+function coteDuRayon(r) {
+  const perso = rayonsPerso().find((x) => x.nom === r);
+  if (perso) return perso.cote === "maison" ? "maison" : "alimentaire";
+  if (RAYONS_NEUTRES.indexOf(r) !== -1) return "neutre";
+  return RAYONS_MAISON.indexOf(r) !== -1 ? "maison" : "alimentaire";
+}
+function rayonDuCote(r, cote) {
+  const c = coteDuRayon(r);
+  return c === "neutre" || c === cote;
+}
 const JOURS = ["lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche"];
 
 /* Les raisons de ne pas avoir de repas à prévoir. Une case marquée ainsi
@@ -48,7 +93,28 @@ function estAbsence(c) { return !!(c && c.absent); }
 
 /* Réglages de la famille et leurs valeurs par défaut. Déclarés ici, avec les
    autres constantes : `etatVide()` s'en sert dès le chargement du fichier. */
-const REGLAGES_DEFAUT = { convives: 4, pointsRepas: 15, antiGaspi: true };
+const REGLAGES_DEFAUT = { convives: 4, points: true, pointsRepas: 15, antiGaspi: true };
+
+/* Les palettes de couleurs (styles.css). Choisies PAR APPAREIL, comme le mode
+   clair/sombre : chacun la sienne, sans droits particuliers — un réglage rangé
+   sur le profil ne serait modifiable que par un administrateur.
+   `val` vide = la palette d'origine, aucun attribut posé sur la page. */
+const PALETTES = [
+  { val: "", nom: "Maison", emoji: "🌿", apercu: ["#F2EFE6", "#4E7A6A", "#C4703F"] },
+  { val: "myrtille", nom: "Myrtille", emoji: "🫐", apercu: ["#EFF0F7", "#4C5BA8", "#9B5FA8"] },
+  { val: "pivoine", nom: "Pivoine", emoji: "🌸", apercu: ["#F7EFF1", "#A84D6E", "#C4703F"] },
+  { val: "lagon", nom: "Lagon", emoji: "🌊", apercu: ["#EAF4F4", "#1F7A81", "#D2694F"] },
+  { val: "cannelle", nom: "Cannelle", emoji: "🍁", apercu: ["#F6EFE3", "#A8622A", "#B5452F"] },
+  { val: "ardoise", nom: "Ardoise", emoji: "🖤", apercu: ["#F1F2F3", "#3A4A5A", "#B4562F"] }
+];
+function paletteActuelle() {
+  try { return localStorage.getItem("tribu:palette") || ""; } catch (e) { return ""; }
+}
+function appliquerPalette(v) {
+  if (v) document.documentElement.dataset.palette = v;
+  else delete document.documentElement.dataset.palette;
+  try { localStorage.setItem("tribu:palette", v); } catch (e) { /* sans importance */ }
+}
 const PORTIONS_BASE = 4;      // les recettes fournies sont écrites pour 4
 /* Les grilles d'icones. Elles sont volontairement fournies : c'est ce qui
    permet a chacun de se reconnaitre du premier coup d'oeil dans les listes. */
@@ -110,7 +176,7 @@ function surAncienneAdresse() {
 
 /* Unites utilisables pour les ingredients, le stock et les courses.
    "" = pas d'unite, on compte simplement (4 carottes). */
-const UNITES = ["", "g", "kg", "ml", "cl", "l", "boîte(s)", "paquet(s)", "pot(s)",
+const UNITES = ["", "g", "kg", "ml", "cl", "l", "boîte(s)", "bouteille(s)", "paquet(s)", "pot(s)",
   "bocal(aux)", "sachet(s)", "tranche(s)", "bouquet(s)", "branche(s)", "gousse(s)",
   "tête(s)", "bûche(s)", "morceau(x)", "pincée(s)", "c. à soupe", "c. à café"];
 
@@ -123,8 +189,49 @@ const FAMILLES_UNITES = {
 /* Rubriques rangees dans le document principal de la famille.
    `etats` et `journal` sont a part : ils ont leurs propres regles de securite. */
 const CLES_DOC = ["famille", "membres", "membresUid", "adminsUid", "appareils", "appareilsInfos", "taches",
-  "bareme", "courses", "listesCourses", "stock", "recettes", "repas", "notes", "cadeaux",
+  "bareme", "courses", "listesCourses", "stock", "repas", "notes", "cadeaux",
   "tarifs", "echanges", "reglages", "jetonUtilise"];
+
+/* LES RECETTES VIVENT A PART (12/09/2026).
+
+   Elles pesaient 350 Ko des 348 Ko du document principal. Or Firestore
+   renvoie le document ENTIER a tous les appareils a la moindre modification :
+   cocher un article de courses reexpediait donc 350 Ko de recettes a chacun
+   (mesure du banc d'essai). Elles ont maintenant leur propre document,
+   familles/{code}/rubriques/recettes, qui ne bouge que lorsqu'une recette
+   change — c'est-a-dire presque jamais.
+
+   TRANSITION : une famille pas encore deplacee garde ses recettes dans le
+   document principal. L'application lit donc les DEUX endroits, et le
+   document a part fait foi des qu'il existe (Store.recettesAPart). */
+const RUBRIQUES = "rubriques";
+const RUBRIQUE_RECETTES = "recettes";
+
+/* ---------- INTERRUPTEUR DU DEPLACEMENT DES RECETTES ----------
+
+   POURQUOI il existe : un telephone reste en 0.48 lit les recettes dans le
+   document principal. Une fois la famille deplacee, elles n'y sont plus — ce
+   telephone les verrait disparaitre. L'interrupteur permet donc de deposer la
+   0.50 partout SANS rien deplacer, le temps que chacun l'ait chargee.
+
+   false = rien ne bouge. Les familles gardent leurs recettes dans le document
+           principal, les nouvelles familles y naissent aussi. La 0.48 et la
+           0.50 cohabitent sans risque. L'application sait deja LIRE les deux
+           rangements : c'est le seul reglage a modifier.
+
+   true  = chaque famille est deplacee a la premiere ouverture par un de ses
+           administrateurs, une seule fois. Le document principal passe de
+           348 Ko a 2 Ko, et une modification de la liste de courses coute
+           alors 4 Ko au lieu de 348 (mesures du banc d'essai).
+
+   QUAND le passer a true : quand tous les telephones de toutes les familles
+   ont ouvert la 0.50 au moins une fois. Le service worker etant en « reseau
+   d'abord », il suffit que chacun ouvre l'application avec du reseau.
+
+   Le retour en arriere n'est PAS automatique : une famille deja deplacee le
+   reste (l'application continue de la lire correctement, quel que soit
+   l'interrupteur). Il ne protege que celles qui ne le sont pas encore. */
+const DEPLACER_RECETTES = false;
 
 /* Les saisons, au sens cuisine : ce qu'on a envie de manger et ce qu'on
    trouve sur l'étal. Une recette sans saison indiquée convient toute l'annee. */
@@ -175,6 +282,40 @@ function esc(s) {
 }
 function pad(n) { return String(n).padStart(2, "0"); }
 function propre(v) { return JSON.parse(JSON.stringify(v)); }
+
+/* Le champ du code a 4 chiffres : masque, avec un oeil pour le relire.
+
+   Le TYPE du champ ne change JAMAIS : il reste `tel` avec un `inputmode`
+   numerique. C'est volontaire — passer en `type="password"` ramenerait le
+   clavier de lettres sur iPhone et reveillerait le gestionnaire de mots de
+   passe. On masque donc a l'affichage seulement (styles.css, .pin-masque).
+
+   A la CONNEXION, le code etait deja masque : cet ecran-la a ses propres
+   points et son clavier maison. Il ne restait visible qu'ici, la ou on le
+   CHOISIT — c'est-a-dire souvent devant quelqu'un. */
+function champPin(attrs) {
+  return '<div class="champ-pin">' +
+    '<input type="tel" name="pin" inputmode="numeric" maxlength="4" class="pin-masque" ' +
+    (attrs || "") + ">" +
+    '<button type="button" class="oeil-pin" data-role="voir-pin" ' +
+    'aria-label="Afficher le code">👁️</button></div>';
+}
+
+/* Un seul branchement, pose sur la page entiere : ces champs apparaissent sur
+   l'ecran de connexion, dans la fiche d'un membre et dans « Mon profil », et
+   tous sont redessines sans arret. Un branchement par formulaire finirait
+   toujours par en oublier un. */
+document.addEventListener("click", (ev) => {
+  const b = ev.target.closest ? ev.target.closest('[data-role="voir-pin"]') : null;
+  if (!b) return;
+  ev.preventDefault();
+  const champ = b.parentNode.querySelector("input");
+  if (!champ) return;
+  const masque = champ.classList.toggle("pin-masque");
+  b.textContent = masque ? "👁️" : "🙈";
+  b.setAttribute("aria-label", masque ? "Afficher le code" : "Masquer le code");
+  champ.focus();
+});
 
 /* Un lien vers l'exterieur, et RIEN d'autre.
 
@@ -674,7 +815,12 @@ function etatVide() {
     taches: [], bareme: {}, etats: {},
     courses: [], listesCourses: [], stock: [], recettes: [], repas: {}, notes: [],
     cadeaux: [], tarifs: {}, echanges: [], journal: [],
-    reglages: Object.assign({}, REGLAGES_DEFAUT), jetonUtilise: null
+    reglages: Object.assign({}, REGLAGES_DEFAUT), jetonUtilise: null,
+    /* Place dans le programme « Familles Fondatrices » : { numero, genre,
+       statut, reserveeLe, valideeLe }, ou null. Volontairement HORS de
+       CLES_DOC : elle s'ecrit par ses propres methodes, en silence, et ne
+       doit jamais partir dans une ecriture de rubrique ordinaire. */
+    fondatrice: null
   };
 }
 
@@ -688,6 +834,17 @@ const ui = {
   filtreQuiNotes: "",            // "" = tout le monde, sinon un id de membre
   ongletCourses: "liste",        // "liste" ou "stock"
   rechercheRecette: "",
+  rechercheStock: "",            // recherche dans la réserve
+  rechercheCourses: "",          // recherche dans la liste de courses
+  /* Côté de la réserve regardé : "alimentaire" ou "maison". Gardé sur
+     l'appareil, comme les rayons repliés. */
+  coteReserve: (() => {
+    try { return localStorage.getItem("tribu:coteReserve") === "maison" ? "maison" : "alimentaire"; }
+    catch (e) { return "alimentaire"; }
+  })(),
+  /* Rayons repliés de la réserve : une longue réserve devenait un mur à faire
+     défiler. Gardés sur l'appareil d'une ouverture à l'autre. */
+  rayonsReplies: lireListeMemorisee("tribu:rayonsReplies") || [],
   /* "perso", "vege", "rapide", "leger"… gardés sur l'appareil d'une ouverture
      à l'autre (avant, ils se perdaient à chaque rechargement). */
   filtresRecettes: (() => {
@@ -712,6 +869,52 @@ function estRecettePerso(r) {
   if (r.origine === "perso") return true;
   if (r.origine) return false;                       // "depart" ou "importee"
   return !NOMS_DEPART.has(String(r.nom || "").toLowerCase().trim());
+}
+
+/* Favoris, PROPRES À CHAQUE PERSONNE (choix d'Amandine, 12 septembre 2026) :
+   les goûts diffèrent dans une famille. Ils sont rangés sur la recette, dans
+   une liste `favoris` d'identifiants de membres — les recettes sont déjà
+   partagées par la tribu, et « recettes » fait partie des rubriques qu'un
+   membre ordinaire a le droit d'enregistrer : aucun droit d'administrateur
+   n'est nécessaire pour marquer ses propres favoris. */
+/* Les cadeaux proposés au premier lancement des versions précédentes. Comme
+   les recettes de départ, ils n'ont aucune marque : on les reconnaît par leur
+   nom, comparé sans accents ni ponctuation. Ceux de la liste actuelle portent
+   `origine: "depart"`, ce qui rendra le prochain renouvellement exact. */
+const CADEAUX_ORIGINE = ["choisir le film du soir", "un dessert au choix", "soiree pizza",
+  "30 min d ecran en plus", "sortie au parc piscine", "petit cadeau surprise"];
+function cleCadeau(nom) {
+  return pourChercher(String(nom || "")).replace(/[^a-z0-9]+/g, " ").trim();
+}
+function estCadeauOrigine(c) {
+  return c.origine === "depart" || CADEAUX_ORIGINE.indexOf(cleCadeau(c.nom)) !== -1;
+}
+/* Ce que le renouvellement ferait : ce qui part, ce qui arrive. Un cadeau
+   présent dans les deux listes reste en place — il n'est ni retiré, ni
+   dupliqué, et garde le coût que la famille lui a donné. */
+function cadeauxAremplacer() {
+  const nouveaux = cadeauxDeDepart();
+  const clesNouvelles = nouveaux.map((n) => cleCadeau(n.nom));
+  const dejaLa = (nom) => etat.cadeaux.some((c) => cleCadeau(c.nom) === cleCadeau(nom));
+  return {
+    aRetirer: etat.cadeaux.filter((c) => estCadeauOrigine(c) &&
+      clesNouvelles.indexOf(cleCadeau(c.nom)) === -1),
+    aAjouter: nouveaux.filter((n) => !dejaLa(n.nom))
+  };
+}
+
+function estFavori(r) {
+  return !!(moi && (r.favoris || []).indexOf(moi.id) !== -1);
+}
+function basculerFavori(rid) {
+  const r = etat.recettes.find((x) => x.id === rid);
+  if (!r || !moi) return;
+  const l = (r.favoris || []).slice();
+  const i = l.indexOf(moi.id);
+  if (i === -1) l.push(moi.id); else l.splice(i, 1);
+  r.favoris = l;
+  sauver("recettes");
+  toast(i === -1 ? "Ajouté à vos favoris ⭐" : "Retiré de vos favoris");
 }
 
 /* --- Saisons --- */
@@ -828,6 +1031,10 @@ function recetteCorrespond(r, recherche, f) {
   if (q && !pourChercher(r.nom).includes(q) &&
     !(r.ingredients || []).some((i) => pourChercher(i.nom).includes(q))) return false;
   if (f.includes("perso") && !estRecettePerso(r)) return false;
+  /* Recopiée depuis le catalogue d'une autre famille. Même repère que
+     l'étiquette « importée » de la liste : les deux ne peuvent pas diverger. */
+  if (f.includes("importee") && r.origine !== "importee") return false;
+  if (f.includes("favori") && !estFavori(r)) return false;
   if (f.includes("vege") && !r.vegetarien) return false;
   if (f.includes("rapide") && !r.rapide) return false;
   if (f.includes("leger") && r.type !== "leger") return false;
@@ -1226,13 +1433,25 @@ const Store = {
     }
     try {
       const base = "https://www.gstatic.com/firebasejs/10.12.2/";
-      const [app, auth, fs] = await Promise.all([
+      /* Firestore pèse 426 Ko, deux fois le reste du SDK (mesure du
+         12/09/2026). On lance son téléchargement TOUT DE SUITE, mais on ne
+         l'attend qu'une fois la session ouverte : il arrive donc pendant la
+         connexion au lieu de la retarder. Rien d'autre ne change — le reste
+         du code trouve `_fs` et `_db` en place, comme avant. */
+      const promesseFirestore = import(base + "firebase-firestore.js");
+      const [app, auth] = await Promise.all([
         import(base + "firebase-app.js"),
-        import(base + "firebase-auth.js"),
-        import(base + "firebase-firestore.js")
+        import(base + "firebase-auth.js")
       ]);
       const a = app.initializeApp(configFirebase());
-      await this._activerAppCheck(a, base);
+      /* App Check n'est PAS attendu (mesure du 12/09/2026) : il importait un
+         quatrième module puis le script reCAPTCHA avant même d'ouvrir la
+         session, et tout ce temps s'ajoutait au démarrage. Il s'installe
+         maintenant en parallèle ; les requêtes suivantes porteront son jeton.
+         Sans le mode « Appliquer », une requête partie trop tôt n'est de
+         toute façon jamais refusée. La session du lien e-mail, elle, garde
+         son attente : elle n'est pas sur le chemin du démarrage. */
+      this._activerAppCheck(a, base);
       const au = auth.getAuth(a);
       if (EMULATEUR) auth.connectAuthEmulator(au, "http://127.0.0.1:9099");
       this._auth = auth;
@@ -1250,8 +1469,38 @@ const Store = {
       let u = await this._sessionExistante();
       if (!u || !u.isAnonymous) u = (await auth.signInAnonymously(au)).user;
 
+      /* Firestore, enfin attendu : son téléchargement a couru pendant toute
+         l'ouverture de la session, il est donc déjà là — ou presque. */
+      const fs = await promesseFirestore;
       this._fs = fs;
-      this._db = fs.getFirestore(a);
+      /* CACHE LOCAL (12/09/2026) — la plus grosse economie de l'application.
+
+         Sans lui, chaque ouverture redemandait TOUT au serveur : le document
+         de la tribu, les etats, le journal. Mesure du banc d'essai : 802
+         documents lus a chaque ouverture, l'historique en entier compris.
+
+         Avec lui, Firestore garde les donnees dans le navigateur et se
+         reabonne avec un JETON DE REPRISE : le serveur ne renvoie plus que ce
+         qui a change depuis la derniere fois. Une ouverture sans nouveaute ne
+         coute alors presque rien.
+
+         `persistentMultipleTabManager` : sur un meme appareil, l'icone de
+         l'ecran d'accueil et le navigateur peuvent etre ouverts ensemble.
+         Sans lui, la seconde fenetre se verrait refuser le cache.
+
+         REPLI OBLIGATOIRE : en navigation privee, ou si le navigateur refuse
+         IndexedDB, l'initialisation echoue. On repart alors sur la memoire
+         seule — moins economique, mais l'application fonctionne. */
+      try {
+        this._db = fs.initializeFirestore(a, {
+          localCache: fs.persistentLocalCache({ tabManager: fs.persistentMultipleTabManager() })
+        });
+        this.cacheLocal = true;
+      } catch (err) {
+        console.warn("Cache local indisponible, mémoire seule :", err);
+        this._db = fs.getFirestore(a);
+        this.cacheLocal = false;
+      }
       if (EMULATEUR) fs.connectFirestoreEmulator(this._db, "127.0.0.1", 8085);
       this.uid = u.uid;
       this.mode = "nuage";
@@ -1692,13 +1941,107 @@ const Store = {
     }
   },
 
+  /* ---- programme « Familles Fondatrices » (collection `fondateurs`) ----
+     Le numero est l'IDENTIFIANT du document : c'est Firestore qui garantit
+     qu'une seule tribu peut l'obtenir (firestore.rules, match /fondateurs).
+     Tout se passe en arriere-plan : personne n'a rien demande, donc un echec
+     est silencieux et sera retente a la prochaine ouverture. */
+
+  /* Les places deja prises, 100 au plus. `null` = liste illisible. */
+  async placesFondatrices() {
+    if (this.mode !== "nuage") return null;
+    try {
+      const fs = this._fs;
+      const r = await fs.getDocs(fs.query(fs.collection(this._db, "fondateurs"), fs.limit(100)));
+      const places = [];
+      r.forEach((s) => places.push(this._placeLue(s.id, s.data())));
+      return places;
+    } catch (err) {
+      console.warn("Places fondatrices illisibles :", err);
+      return null;
+    }
+  },
+
+  _placeLue(ident, d) {
+    d = d || {};
+    return {
+      numero: Number(ident), famille: d.famille || "",
+      genre: d.genre || "fondatrice", statut: d.statut || "reservee",
+      reserveeLe: d.reserveeLe && d.reserveeLe.toMillis ? d.reserveeLe.toMillis() : 0
+    };
+  },
+
+  async placeFondatrice(numero) {
+    if (this.mode !== "nuage") return null;
+    try {
+      const s = await this._fs.getDoc(this._fs.doc(this._db, "fondateurs", String(numero)));
+      return s.exists() ? this._placeLue(numero, s.data()) : null;
+    } catch (err) { return null; }
+  },
+
+  /* Reserve la place. Echoue si une autre tribu l'a prise entre-temps : c'est
+     exactement ce qu'on attend, et le seul endroit ou l'unicite se joue. */
+  async reserverPlaceFondatrice(numero, genre, code) {
+    if (this.mode !== "nuage") return false;
+    try {
+      await this._fs.setDoc(this._fs.doc(this._db, "fondateurs", String(numero)), {
+        famille: code, genre: genre, statut: "reservee",
+        reserveeLe: this._fs.serverTimestamp()
+      });
+      return true;
+    } catch (err) { return false; }
+  },
+
+  async validerPlaceFondatrice(numero) {
+    if (this.mode !== "nuage") return false;
+    try {
+      await this._fs.setDoc(this._fs.doc(this._db, "fondateurs", String(numero)),
+        { statut: "validee", valideeLe: this._fs.serverTimestamp() }, { merge: true });
+      return true;
+    } catch (err) { return false; }
+  },
+
+  async libererPlaceFondatrice(numero) {
+    if (this.mode !== "nuage") return false;
+    try {
+      await this._fs.deleteDoc(this._fs.doc(this._db, "fondateurs", String(numero)));
+      return true;
+    } catch (err) { return false; }
+  },
+
+  /* Inscrit la place DANS la tribu. A faire AVANT de reserver : les regles
+     verifient que la tribu annonce bien ce numero, et son document n'en porte
+     qu'un seul — c'est ce qui l'empeche d'en viser deux a la fois. */
+  async inscrirePlaceFondatrice(place) {
+    if (this.mode !== "nuage") { this._ecrireLocal(this.code, etat); return true; }
+    try {
+      await this._fs.setDoc(this._fs.doc(this._db, "familles", this.code),
+        { fondatrice: place }, { merge: true });
+      return true;
+    } catch (err) {
+      console.warn("Place fondatrice non inscrite :", err);
+      return false;
+    }
+  },
+
   async creer(code, donnees) {
     this.derniereErreur = null;
     if (this.mode !== "nuage") { this._ecrireLocal(code, donnees); return true; }
     try {
       const principal = {};
       CLES_DOC.forEach((c) => { principal[c] = propre(donnees[c]); });
+      /* Interrupteur ferme : la famille nait a l'ancienne, recettes dans le
+         document principal, pour rester lisible par un telephone en 0.48. */
+      if (!DEPLACER_RECETTES) principal.recettes = propre(donnees.recettes || []);
       await this._fs.setDoc(this._fs.doc(this._db, "familles", code), principal);
+      if (DEPLACER_RECETTES) {
+        /* Interrupteur ouvert : une famille neuve nait deja rangee, elle
+           n'aura donc jamais a etre deplacee. */
+        await this._fs.setDoc(
+          this._fs.doc(this._db, "familles", code, RUBRIQUES, RUBRIQUE_RECETTES),
+          { liste: propre(donnees.recettes || []) });
+        this.recettesAPart = true;
+      }
       return true;
     } catch (err) {
       console.warn("Création refusée :", err);
@@ -1710,6 +2053,9 @@ const Store = {
   abonner(code, cb) {
     this.code = code;
     this._cbAbonnement = cb;             // pour se réabonner après un simple accroc
+    /* On ne sait pas encore si CETTE famille a ete deplacee : c'est l'ecoute
+       du document des recettes qui le dira. */
+    this.recettesAPart = false;
     this._detacher();
     if (this.mode === "nuage") {
       const d = this._db, fs = this._fs;
@@ -1717,10 +2063,24 @@ const Store = {
          (étape 3, _verifierAcces). Les autres erreurs restent notées seulement. */
       const surErreur = (err) => {
         console.warn("Ecoute interrompue :", err);
+        /* Une ouverture attend peut-etre cette reponse : un refus doit la
+           faire echouer tout de suite (voir abonnerEtAttendre). */
+        if (this._surRefus && err && err.code === "permission-denied") this._surRefus(err);
         if (err && err.code === "permission-denied") this._verifierAcces(code);
       };
-      this._unsubs.push(fs.onSnapshot(fs.doc(d, "familles", code), (s) => {
-        if (s.exists()) cb(s.data(), "doc");
+      /* `includeMetadataChanges` : sans cette option, quand RIEN n'a change
+         depuis la derniere ouverture, le serveur confirme la synchronisation
+         mais ne livre aucun instantane — l'attente de l'ouverture tombait
+         alors dans sa minuterie de repli, pour rien (3,7 s mesurees au banc).
+         Avec elle, la confirmation arrive et l'entree est immediate.
+         Le prix : un redessin de plus par enregistrement (l'echo local, puis
+         l'accuse de reception du serveur). */
+      this._unsubs.push(fs.onSnapshot(fs.doc(d, "familles", code), { includeMetadataChanges: true }, (s) => {
+        if (!s.exists()) return;
+        /* `fromCache` distingue une reponse DU SERVEUR d'une reponse du cache
+           local. Toute la securite de l'ouverture repose sur cette nuance. */
+        if (this._surDoc) this._surDoc(s.data(), !s.metadata.fromCache);
+        cb(s.data(), "doc");
       }, surErreur));
       this._unsubs.push(fs.onSnapshot(fs.collection(d, "familles", code, "etats"), (q) => {
         const e = {};
@@ -1732,6 +2092,13 @@ const Store = {
         q.forEach((s) => j.push(Object.assign({ id: s.id }, s.data())));
         cb({ journal: j }, "journal");
       }, surErreur));
+      /* Les recettes, dans leur document a part. Absent = famille pas encore
+         deplacee : on garde alors celles du document principal. */
+      this._unsubs.push(fs.onSnapshot(fs.doc(d, "familles", code, RUBRIQUES, RUBRIQUE_RECETTES), (s) => {
+        if (!s.exists()) return;
+        this.recettesAPart = true;
+        cb({ recettes: (s.data() || {}).liste || [] }, "recettes");
+      }, surErreur));
     } else {
       const surStockage = (ev) => {
         if (ev.key === this._cleLocale(code) && ev.newValue) cb(JSON.parse(ev.newValue), "tout");
@@ -1739,6 +2106,58 @@ const Store = {
       window.addEventListener("storage", surStockage);
       this._unsubs.push(() => window.removeEventListener("storage", surStockage));
     }
+  },
+
+  /* Combien de temps on laisse au serveur avant de se contenter du cache. */
+  DELAI_HORS_LIGNE: 2500,
+
+  /* Ouvre l'ecoute ET attend le premier etat de la tribu.
+
+     Avant, l'application LISAIT la tribu (charger) puis s'y ABONNAIT : les
+     memes documents arrivaient deux fois a chaque ouverture — 802 documents
+     mesures au banc d'essai pour 401 documents reels. Ici, on ne fait plus
+     que s'abonner.
+
+     CE QU'ON ATTEND AU JUSTE : une reponse DU SERVEUR.
+
+     Depuis que le cache local existe, il repond instantanement — y compris
+     sur un appareil qui vient d'etre RETIRE de la tribu. Entrer sur cette
+     seule foi reviendrait a defaire l'invariant I4 (« un appareil revoque ne
+     revient jamais ») : jusqu'ici, c'est la lecture au serveur qui le
+     refusait. Trois issues, donc :
+
+     - le serveur repond       -> on entre, lui seul fait foi ;
+     - le serveur refuse       -> on n'entre pas, ecran neutre ;
+     - le serveur se tait et le cache connait la tribu (hors ligne)
+                               -> on entre au bout de DELAI_HORS_LIGNE, pour
+                                  que l'application reste utilisable dans le
+                                  metro.
+
+     Une tribu qui n'existe pas ne livre aucun instantane : la minuterie tombe
+     alors sur `null` et l'ouverture echoue, comme avant. */
+  abonnerEtAttendre(code, cb) {
+    if (this.mode !== "nuage") {
+      const d = this._lireLocal(code);
+      if (d) { cb(d, "tout"); this.abonner(code, cb); }
+      return Promise.resolve(d);
+    }
+    return new Promise((resoudre) => {
+      let fini = false, duCache = null;
+      const finir = (v) => {
+        if (fini) return;
+        fini = true;
+        clearTimeout(minuterie);
+        this._surDoc = null;
+        this._surRefus = null;
+        resoudre(v);
+      };
+      const minuterie = setTimeout(() => finir(duCache), this.DELAI_HORS_LIGNE);
+      this._surDoc = (donnees, duServeur) => {
+        if (duServeur) finir(donnees); else duCache = donnees;
+      };
+      this._surRefus = () => finir(null);
+      this.abonner(code, cb);
+    });
   },
 
   _detacher() {
@@ -1785,6 +2204,9 @@ const Store = {
     this._detacher();
     Object.keys(localStorage).filter((k) => k.indexOf("tribu:") === 0)
       .forEach((k) => { try { localStorage.removeItem(k); } catch (e) { } });
+
+    await this.purgerCacheLocal();
+
     if (this.mode === "nuage" && this._au && this._au.currentUser) {
       try { await this._auth.deleteUser(this._au.currentUser); return; }
       catch (e) { console.warn("Session de l'appareil non supprimée, fermée à la place :", e); }
@@ -1792,17 +2214,91 @@ const Store = {
     }
   },
 
+  /* LE CACHE LOCAL GARDE UNE COPIE COMPLETE DE LA TRIBU (12/09/2026).
+
+     Depuis qu'il est actif, effacer les reperes de localStorage ne suffit
+     PLUS : le document de la famille, les membres (avec l'empreinte de leur
+     code) et tout l'historique dorment dans IndexedDB. Sans cette purge, ils
+     resteraient sur l'appareil — exactement ce que « Repartir de zero »,
+     « Quitter la tribu » et « Effacer les donnees de cet appareil »
+     promettent d'effacer. Les trois l'appellent.
+
+     Il faut arreter Firestore avant d'effacer : c'est la seule facon de
+     liberer sa base. Les trois appelants rechargent la page juste apres, la
+     base arretee n'a donc jamais a resservir. Idempotente : un second appel
+     (base deja arretee) ne fait rien. */
+  async purgerCacheLocal() {
+    if (this.mode !== "nuage" || !this._db || !this._fs || !this._fs.clearIndexedDbPersistence) return;
+    if (this._cachePurge) return;
+    this._cachePurge = true;
+    this._detacher();
+    try {
+      await this._fs.terminate(this._db);
+      await this._fs.clearIndexedDbPersistence(this._db);
+    } catch (e) { console.warn("Cache local non effacé :", e); }
+  },
+
   /* --- ecriture du document principal (une ou plusieurs rubriques) --- */
   async ecrire(cles) {
     if (this.mode !== "nuage") { this._ecrireLocal(this.code, etat); return; }
+    /* Les recettes suivent le rangement de LEUR famille, pas l'interrupteur :
+       une famille deja deplacee ecrit dans son document a part, une famille
+       restee a l'ancienne continue d'ecrire dans le document principal.
+       C'est exactement ce qui permet aux deux versions de cohabiter, et ce qui
+       evite qu'une sauvegarde laisse les recettes a moitie a chaque endroit.
+       Les appels de l'application (sauver("recettes")) n'ont rien a en savoir. */
+    const veutRecettes = cles.indexOf("recettes") !== -1;
+    if (veutRecettes && this.recettesAPart) {
+      await this.ecrireRecettes();
+      cles = cles.filter((c) => c !== "recettes");
+    }
     const morceau = {};
     cles.forEach((c) => { if (CLES_DOC.indexOf(c) !== -1) morceau[c] = propre(etat[c]); });
+    if (veutRecettes && !this.recettesAPart) morceau.recettes = propre(etat.recettes);
     if (!Object.keys(morceau).length) return;
     try {
       await this._fs.setDoc(this._fs.doc(this._db, "familles", this.code), morceau, { merge: true });
     } catch (err) {
       console.warn("Echec de l'enregistrement :", err);
       toast("Enregistrement refusé (droits insuffisants ?)");
+    }
+  },
+
+  /* Le document des recettes. Ecrit en entier : une famille en a quelques
+     centaines, et elles ne changent qu'a la main. */
+  async ecrireRecettes() {
+    if (this.mode !== "nuage") { this._ecrireLocal(this.code, etat); return; }
+    try {
+      await this._fs.setDoc(
+        this._fs.doc(this._db, "familles", this.code, RUBRIQUES, RUBRIQUE_RECETTES),
+        { liste: propre(etat.recettes) });
+      this.recettesAPart = true;
+    } catch (err) {
+      console.warn("Echec de l'enregistrement des recettes :", err);
+      toast("Enregistrement refusé (droits insuffisants ?)");
+    }
+  },
+
+  /* DEPLACEMENT, une seule fois par famille.
+
+     L'ordre compte : on ecrit d'abord les recettes a leur nouvelle place, on
+     ne retire le champ de l'ancien document QU'ENSUITE. Si le reseau coupe au
+     milieu, au pire les recettes existent aux deux endroits — jamais nulle
+     part. */
+  async migrerRecettes(code) {
+    try {
+      const ref = this._fs.doc(this._db, "familles", code, RUBRIQUES, RUBRIQUE_RECETTES);
+      const s = await this._fs.getDoc(ref);
+      if (s.exists()) { this.recettesAPart = true; return false; }
+      await this._fs.setDoc(ref, { liste: propre(etat.recettes) });
+      this.recettesAPart = true;
+      await this._fs.setDoc(this._fs.doc(this._db, "familles", code),
+        { recettes: this._fs.deleteField() }, { merge: true });
+      console.info("Recettes déplacées dans leur propre document (" + etat.recettes.length + ").");
+      return true;
+    } catch (err) {
+      console.warn("Déplacement des recettes impossible :", err);
+      return false;
     }
   },
 
@@ -2032,6 +2528,65 @@ const Store = {
     } catch (err) { this.derniereErreur = err; return { ok: false, n: 0, err: err }; }
   },
 
+  /* Les retours d'une famille partent avec elle (revue du 12/09/2026) : ils
+     portent un prenom, le nom et le repere de la famille. On les retrouve par
+     le repere, comme les invitations. */
+  async supprimerRetoursDe(code) {
+    if (this.mode !== "nuage") return { ok: true, n: 0 };
+    try {
+      const fs = this._fs;
+      const q = await fs.getDocs(fs.query(fs.collection(this._db, "retours"),
+        fs.where("famille", "==", code)));
+      const refs = [];
+      q.forEach((s) => refs.push(s.ref));
+      return await this._effacerRefs(refs);
+    } catch (err) { this.derniereErreur = err; return { ok: false, n: 0, err: err }; }
+  },
+
+  /* MENAGE des invitations MORTES d'une tribu (12/09/2026).
+
+     Sur le telephone, ce menage existait deja : `_invitationsLocales()` efface
+     a chaque acces les invitations expirees et celles utilisees depuis plus de
+     deux jours. Dans le nuage, RIEN ne le faisait : elles s'accumulaient
+     depuis le premier jour. Or chacune embarque un prenom et l'empreinte d'un
+     code a 4 chiffres (Invitations.creer) — les garder sans usage, c'est
+     garder ces informations pour rien.
+
+     Memes criteres qu'en local, volontairement :
+     - expiree : elle ne fonctionne plus de toute facon ;
+     - utilisee depuis plus de DELAI_PURGE_INVITATION : les deux jours de
+       sursis servent a represente le meme jeton si l'entree a echoue juste
+       apres la reservation (reseau coupe).
+
+     JAMAIS une invitation EN ATTENTE : son lien fonctionne encore, quelqu'un
+     est peut-etre en train de s'en servir. Elle partira a son expiration.
+
+     Effacer une invitation ne retire l'acces de personne : l'acces vient de
+     la liste des appareils de la famille, et l'invitation n'est consultee
+     qu'au moment d'entrer (voir les tests, « MENAGE — invitations mortes »). */
+  async purgerInvitationsDe(code) {
+    if (this.mode !== "nuage") return { ok: true, n: 0 };   // deja fait a chaque acces
+    try {
+      const fs = this._fs;
+      const q = await fs.getDocs(fs.query(fs.collection(this._db, "invitations"),
+        fs.where("famille", "==", code)));
+      const maintenant = Date.now();
+      const refs = [];
+      q.forEach((s) => {
+        const inv = s.data() || {};
+        const perimee = inv.expireLe && inv.expireLe < maintenant;
+        const consommee = inv.utilisee &&
+          (maintenant - (Number(inv.utiliseeLe) || 0) > this.DELAI_PURGE_INVITATION);
+        if (perimee || consommee) refs.push(s.ref);
+      });
+      if (!refs.length) return { ok: true, n: 0 };
+      return await this._effacerRefs(refs);
+    } catch (err) {
+      console.warn("Ménage des invitations impossible :", err);
+      return { ok: false, n: 0, err: err };
+    }
+  },
+
   async supprimerRecettesDe(code) {
     if (this.mode !== "nuage") return { ok: true, n: 0 };
     try {
@@ -2115,7 +2670,18 @@ const Store = {
     }
     try {
       const { jeton, ...corps } = inv;
-      await this._fs.setDoc(this._fs.doc(this._db, "invitations", jeton), propre(corps));
+      /* La date de creation, a l'heure du SERVEUR : la console Firebase
+         l'affiche alors en clair (« 12 septembre 2026 à 21:05 »), la ou un
+         nombre de millisecondes restait illisible. C'est possible ici parce
+         que RIEN dans l'application ne relit ce champ : il ne sert qu'a la
+         lecture humaine.
+         `expireLe` et `utiliseeLe`, eux, restent des nombres — les regles
+         Firestore comparent l'un, le menage des invitations compare l'autre.
+         Et `propre()` (un aller-retour JSON) detruirait le marqueur du
+         serveur : on le repose donc APRES. */
+      const corpsPropre = propre(corps);
+      corpsPropre.creeeLe = this._fs.serverTimestamp();
+      await this._fs.setDoc(this._fs.doc(this._db, "invitations", jeton), corpsPropre);
       return true;
     } catch (err) {
       console.warn("Invitation refusée :", err);
@@ -2266,14 +2832,19 @@ function ecrireSession(s) {
 function appliquerDonnees(d, portee) {
   if (portee === "etats") { etat.etats = d.etats || {}; return; }
   if (portee === "journal") { etat.journal = d.journal || []; return; }
+  if (portee === "recettes") { etat.recettes = d.recettes || []; return; }
 
   const v = etatVide();
-  const garde = { etats: etat.etats, journal: etat.journal };
+  const garde = { etats: etat.etats, journal: etat.journal, recettes: etat.recettes };
   etat = Object.assign(v, d || {});
   if (portee === "doc") {          // le document principal ne porte pas ces deux-la
     etat.etats = garde.etats;
     etat.journal = garde.journal;
   }
+  /* Famille deja deplacee : le champ « recettes » du document principal est
+     perime — il n'y est meme plus. Sans cette ligne, un instantane du
+     document principal ecraserait la bonne liste par un tableau vide. */
+  if (Store.recettesAPart) etat.recettes = garde.recettes;
   /* Reprise des donnees de la version 1 */
   if (d && d.etatsTaches && !Object.keys(etat.etats || {}).length) etat.etats = d.etatsTaches;
 
@@ -2326,6 +2897,10 @@ function donneesExportables() {
     if (c === "famille" || c === "membres" || CHAMPS_NON_EXPORTES.indexOf(c) !== -1) return;
     sortie[c] = etat[c];
   });
+  /* Les recettes ne sont plus dans CLES_DOC (elles ont leur propre document),
+     mais elles font partie des donnees de la famille : le droit a la
+     portabilite ne s'arrete pas a un detail de rangement. */
+  sortie.recettes = etat.recettes;
   /* Les comptes adultes et les appareils, SANS leurs identifiants techniques. */
   sortie.comptes = (Store.comptesFamille || []).map((c) =>
     ({ adresse: c.adresse, membre: c.membre, admin: !!c.admin, ajouteLe: c.ajouteLe }));
@@ -2389,7 +2964,7 @@ async function partagerExport() {
    posé, et le serveur refuserait qu'on le réécrive — il est irréversible. */
 async function supprimerFamilleEntiere(code, suivi, dejaMarquee) {
   const dire = typeof suivi === "function" ? suivi : () => { };
-  const bilan = { journal: 0, etats: 0, invitations: 0, recettes: 0, comptes: 0, repere: 0, ok: false, etape: "", err: null };
+  const bilan = { journal: 0, etats: 0, invitations: 0, recettes: 0, comptes: 0, retours: 0, rubriques: 0, repere: 0, ok: false, etape: "", err: null };
   const etape = async (nom, message, travail) => {
     bilan.etape = nom;
     dire(message);
@@ -2415,14 +2990,34 @@ async function supprimerFamilleEntiere(code, suivi, dejaMarquee) {
     () => Store.supprimerRecettesDe(code)))) return bilan;
   if (!(await etape("comptes", "Effacement des comptes adultes…",
     () => Store.supprimerComptesDe(code)))) return bilan;
+  /* Les retours envoyes par cette famille : prenom, nom et repere y figurent,
+     ils ne doivent pas lui survivre (revue du 12/09/2026). */
+  if (!(await etape("retours", "Effacement des retours envoyés…",
+    () => Store.supprimerRetoursDe(code)))) return bilan;
+  /* Les recettes vivent dans une sous-collection depuis le 12/09/2026 :
+     Firestore n'efface pas les sous-collections avec leur parent, il faut
+     donc la vider explicitement, comme le journal et les etats. */
+  if (!(await etape("rubriques", "Effacement des recettes de la famille…",
+    () => Store.viderSousCollection(code, "rubriques")))) return bilan;
   if (!(await etape("repere", "Effacement du repère de la tribu…",
     () => Store.supprimerRepere(code)))) return bilan;
+  /* La place du programme part avec la tribu, AVANT le document de la
+     famille : c'est lui qui prouve au serveur qu'on en est administrateur.
+     Le numéro retourne alors au pot. Sans conséquence si cela échoue : la
+     suppression de la tribu, elle, ne doit jamais être bloquée par un badge. */
+  if (etat.fondatrice && etat.fondatrice.numero) {
+    dire("Libération de la place Famille Fondatrice…");
+    try { await Store.libererPlaceFondatrice(etat.fondatrice.numero); } catch (e) { }
+  }
+
   if (!(await etape("famille", "Effacement de la famille…",
     () => Store.supprimerDocFamille(code)))) return bilan;
 
   /* Et ce que CET appareil gardait de cette famille. */
   ["tribu:session", "tribu:derniereFamille", "tribu:vue",
-    "tribu:recettesMaj:" + code, "tribu:repereVerifie:" + code, "tribu:donnees:" + code]
+    "tribu:recettesMaj:" + code, "tribu:repereVerifie:" + code, "tribu:donnees:" + code,
+    "tribu:vu:" + code, "tribu:fondatrice:" + code, "tribu:fondatriceFetee:" + code,
+    "tribu:menageInv:" + code, "tribu:recettesAPart:" + code]
     .forEach((k) => { try { localStorage.removeItem(k); } catch (e) { } });
 
   bilan.ok = true;
@@ -2448,34 +3043,53 @@ function motifEchecSuppression(bilan) {
 }
 
 async function entrerDansFamille(code, membreId, opts) {
-  const d = await Store.charger(code);
-  if (!d) return false;
-  appliquerDonnees(d);
+  /* On repart d'un état vide : en changeant de tribu, les états et le journal
+     de la précédente resteraient affichés le temps que les écoutes répondent. */
+  etat = etatVide();
+  moi = null;
+
+  /* UNE SEULE RÉCUPÉRATION (12/09/2026).
+
+     L'application lisait la tribu, PUIS s'y abonnait : les mêmes documents
+     arrivaient deux fois à chaque ouverture. Désormais on ne fait que
+     s'abonner, et on attend la première réponse du serveur.
+
+     Les données sont appliquées dès qu'elles arrivent ; le DESSIN, lui,
+     attend que le profil soit choisi — d'où le garde-fou « if (!moi) ».
+     Sans lui, rendre() travaillerait sans savoir qui regarde. */
+  const d = await Store.abonnerEtAttendre(code, (nouv, portee) => {
+    appliquerDonnees(nouv, portee);
+    if (!moi) return;            // entrée pas encore terminée : on garde, on ne dessine pas
+    rendre();
+    if (portee === "doc") Formulaires.rafraichirAppareils();   // fenêtre ouverte à jour
+  });
+  /* Refus, ou profil introuvable : on ne garde RIEN de ce que le cache a pu
+     livrer en chemin. Sur un appareil retire de la tribu, ses donnees ne
+     doivent pas rester en memoire vive, meme sans etre affichees. */
+  const renoncer = () => { Store._detacher(); Store.code = null; etat = etatVide(); moi = null; return false; };
+  if (!d) return renoncer();
   moi = membre(membreId);
-  if (!moi) return false;
+  if (!moi) return renoncer();
 
   /* Une suppression a été lancée puis interrompue (réseau coupé, application
      fermée en cours de route). La famille est à moitié effacée : l'ouvrir
      comme si de rien n'était montrerait un historique vidé, sans explication.
-     On propose plutôt de terminer — et on ne s'abonne à rien. */
+     On propose plutôt de terminer — et on cesse d'écouter. */
   if (d.suppression) {
+    Store._detacher();
     Store.code = code;
     $("#ecran-app").hidden = true;
     $("#ecran-connexion").hidden = false;
     Connexion.aller("suppressionEnCours", { code: code, admin: estAdmin() });
     return true;
   }
-
-  Store.code = code;
-  Store.abonner(code, (nouv, portee) => {
-    appliquerDonnees(nouv, portee);
-    rendre();
-    if (portee === "doc") Formulaires.rafraichirAppareils();   // fenêtre ouverte à jour
-  });
   ecrireSession({ code: code, membreId: membreId });
   localStorage.setItem("tribu:derniereFamille", code);
   verifierRepere(code);          // en arrière-plan, sans bloquer l'ouverture
   noterOuverture(code);          // idem : la date du jour, pour le ménage
+  suivreProgrammeFondatrices(code);   // idem : la place dans le programme
+  menageInvitations(code);       // idem : on efface les invitations mortes
+  migrerRecettesSiBesoin(code);  // idem : les recettes dans leur propre document
   majRecettesSiBesoin();         // idem : complète les recettes d'avant
   $("#ecran-connexion").hidden = true;
   $("#ecran-app").hidden = false;
@@ -2530,6 +3144,264 @@ async function noterOuverture(code) {
     localStorage.setItem(cle, jour);
   } catch (e) { /* mémoire du navigateur indisponible : on écrit quand même */ }
   await Store.noterOuverture(code);
+}
+
+/* Deplace les recettes de la famille dans leur propre document, UNE fois.
+
+   Reserve a un administrateur : l'operation retire un champ du document
+   principal. Une famille dont aucun administrateur n'ouvre l'application
+   reste a l'ancienne organisation — elle fonctionne, elle coute seulement
+   plus cher. Le drapeau est garde sur l'appareil pour ne pas refaire la
+   verification a chaque ouverture. */
+async function migrerRecettesSiBesoin(code) {
+  if (!DEPLACER_RECETTES) return;         // voir l'interrupteur, en haut du fichier
+  if (Store.mode !== "nuage" || !estAdmin()) return;
+  if (Store.recettesAPart) return;
+  const cle = "tribu:recettesAPart:" + code;
+  try { if (localStorage.getItem(cle)) return; } catch (e) { /* memoire indisponible */ }
+  if (!etat.recettes.length) return;      // rien a deplacer : on reessaiera
+  const fait = await Store.migrerRecettes(code);
+  try { localStorage.setItem(cle, "1"); } catch (e) { /* sans importance */ }
+  if (fait) rendre();
+}
+
+/* Efface les invitations mortes de la tribu, AU PLUS une fois par jour et par
+   appareil. Seul un appareil ADMINISTRATEUR en a le droit côté serveur : sur
+   les autres, la demande partirait pour être refusée.
+
+   Rien n'est annoncé : personne n'a demandé ce ménage, et il ne change rien à
+   ce qui s'affiche. Un échec est sans importance — on réessaiera demain, ou
+   depuis le téléphone d'un autre administrateur. */
+async function menageInvitations(code) {
+  if (Store.mode !== "nuage" || !estAdmin()) return;
+  const cle = "tribu:menageInv:" + code;
+  const jour = new Date().toISOString().slice(0, 10);
+  try {
+    if (localStorage.getItem(cle) === jour) return;
+    localStorage.setItem(cle, jour);
+  } catch (e) { /* mémoire du navigateur indisponible : on fait le ménage quand même */ }
+  const r = await Store.purgerInvitationsDe(code);
+  if (r && r.n) console.info("Invitations effacées (expirées ou utilisées) : " + r.n);
+}
+
+/* ============== Familles Fondatrices (programme de lancement) ==============
+
+   Les 100 premieres tribus qui utilisent VRAIMENT l'application recoivent un
+   numero permanent. Le deroule voulu : place reservee -> utilisation reelle
+   -> validation. Sans validation dans les 7 jours, la place retourne au pot.
+
+   CE QUE LE SERVEUR GARANTIT (firestore.rules, match /fondateurs) : le numero
+   est unique — c'est l'IDENTIFIANT du document, et Firestore refuse d'en
+   creer un qui existe deja —, il va de 1 a 100, une tribu ne reserve que pour
+   elle-meme, et elle n'en detient qu'un a la fois.
+
+   CE QU'IL NE GARANTIT PAS : les criteres ci-dessous. Les regles n'ont pas de
+   boucle et ne savent pas recompter un historique ; sans Cloud Function
+   (ecartees volontairement), c'est l'application qui mesure. Un telephone
+   bidouille pourrait donc se valider trop tot. Il ne pourrait pour autant ni
+   voler le numero d'une autre tribu, ni en prendre deux. La liste complete se
+   relit dans la console Firebase. */
+const PROGRAMME = {
+  places: 100,
+  jours: 7,              // delai pour valider sa place
+  membres: 2,            // au moins deux personnes dans la tribu
+  validees: 5,           // au moins cinq taches ou repas valides
+  joursUtiles: 2,        // sur au moins deux jours differents
+  /* Une tribu creee AVANT cette date etait deja la : elle n'a plus rien a
+     prouver, c'est une PIONNIERE, validee d'emblee. A caler sur le jour de
+     la mise en ligne du programme. */
+  depuis: "2026-09-13"
+};
+
+/* LE PROGRAMME NE TOURNE QUE SUR LES VRAIES ADRESSES.
+
+   Le site d'essai (amandiine37.github.io/matribu-test/) partage la MEME base
+   Firebase que la production : sans ce garde-fou, une tribu creee pour un
+   essai prendrait un vrai numero de Famille Fondatrice, et il faudrait aller
+   le reprendre a la main dans la console.
+
+   Restent donc actifs : matribu-app.fr, l'ancienne adresse /MaTribu, et
+   l'emulateur — qui, lui, tape dans une base bidon ou rien ne compte.
+   Restent inactifs : le site d'essai, et localhost meme avec ?nuage=1 (qui
+   ecrit, lui, dans la vraie base). */
+function programmeActif() {
+  if (Store.mode !== "nuage") return false;        // mode local : rien a reserver
+  if (EMULATEUR) return true;                      // bac a sable, sans consequence
+  return /(^|\.)matribu-app\.fr$/i.test(location.hostname) || surAncienneAdresse();
+}
+
+/* « #042 » : trois chiffres, comme sur un maillot. */
+function numeroFondatrice(n) { return "#" + String(n).padStart(3, "0"); }
+
+function placeFondatrice() { return etat.fondatrice || null; }
+function estFondatrice() {
+  const p = placeFondatrice();
+  return !!(p && p.statut === "validee");
+}
+/* Deja la avant le programme : pionniere. Sinon : fondatrice.
+
+   La comparaison porte sur du TEXTE, et c'est volontaire : une date ISO
+   («2026-09-12T21:05:00.000Z») se compare caractere par caractere dans le bon
+   ordre. « 2026-09-12T… » passe avant « 2026-09-13 », et « 2026-09-13T08:00 »
+   passe apres — donc une tribu creee le 13, meme a huit heures du matin, est
+   bien une fondatrice.
+
+   SANS DATE DU TOUT : pionniere. Toute tribu creee par l'application en pose
+   une ; un document qui n'en a pas vient forcement d'une version ancienne.
+   La traiter comme une nouvelle venue lui ferait regagner une place qu'elle
+   a deja meritee. */
+function genreDeLaTribu() {
+  const cree = String((etat.famille || {}).creeLe || "");
+  return !cree || cree < PROGRAMME.depuis ? "pionniere" : "fondatrice";
+}
+
+/* Ou en est la tribu par rapport aux criteres.
+
+   Tout se lit dans ce qu'elle a deja : ses membres, et le suivi des taches
+   (`etats`). On ne compte PAS dans le journal des points : une tribu qui a
+   desactive les points n'y ecrit plus, et elle merite sa place autant qu'une
+   autre. Un repas cuisine compte comme une tache : c'est de l'usage reel. */
+function avancementFondatrice() {
+  const jours = {};
+  let validees = 0;
+  Object.keys(etat.etats || {}).forEach((c) => {
+    const e = etat.etats[c];
+    if (!e || e.statut !== "valide" || !e.valideLe) return;
+    validees++;
+    jours[String(e.valideLe).slice(0, 10)] = 1;
+  });
+  const nbJours = Object.keys(jours).length;
+  const nbMembres = (etat.membres || []).length;
+  const p = placeFondatrice();
+  const depart = p && p.reserveeLe ? Date.parse(p.reserveeLe) : 0;
+  const fin = depart ? depart + PROGRAMME.jours * 86400000 : 0;
+  return {
+    membres: nbMembres, validees: validees, jours: nbJours,
+    resteJours: fin ? Math.max(0, Math.ceil((fin - Date.now()) / 86400000)) : PROGRAMME.jours,
+    expiree: !!fin && Date.now() > fin,
+    ok: nbMembres >= PROGRAMME.membres
+      && validees >= PROGRAMME.validees
+      && nbJours >= PROGRAMME.joursUtiles
+  };
+}
+
+/* Une place reservee puis oubliee retourne au pot au bout de 7 jours. */
+function placePerimee(p) {
+  return !!(p && p.statut !== "validee" && p.reserveeLe
+    && Date.now() > p.reserveeLe + PROGRAMME.jours * 86400000);
+}
+
+/* Inscrit la place dans la tribu : en memoire ET dans son document. */
+async function inscrirePlace(numero, genre, statut) {
+  const avant = placeFondatrice();
+  const place = {
+    numero: numero, genre: genre, statut: statut,
+    reserveeLe: statut === "reservee" || !avant ? new Date().toISOString() : avant.reserveeLe,
+    valideeLe: statut === "validee" ? new Date().toISOString() : null
+  };
+  const ok = await Store.inscrirePlaceFondatrice(place);
+  if (ok) etat.fondatrice = place;
+  return ok;
+}
+
+async function oublierPlace() {
+  if (!placeFondatrice()) return;
+  if (await Store.inscrirePlaceFondatrice(null)) etat.fondatrice = null;
+}
+
+/* Le moment 🎉, une seule fois par appareil. La trace de la fete reste dans
+   la memoire du navigateur, pas dans la tribu : c'est un evenement d'ecran,
+   pas une donnee de famille — et chaque telephone merite son moment. */
+function feterFondatrice(code) {
+  const cle = "tribu:fondatriceFetee:" + code;
+  try {
+    if (localStorage.getItem(cle)) return;
+    localStorage.setItem(cle, "1");
+  } catch (e) { return; }
+  try { Formulaires.fondatrice(true); } catch (e) { /* l'ecran suffit */ }
+}
+
+/* Suit le programme en arriere-plan, a l'ouverture de la tribu. Seul un
+   appareil ADMINISTRATEUR ecrit : les regles refusent les autres, inutile de
+   les faire echouer pour rien. Rien n'est bloquant et rien n'est annonce
+   ici : c'est l'ecran qui montrera l'avancement. */
+async function suivreProgrammeFondatrices(code) {
+  if (!programmeActif() || !estAdmin()) return;
+  try {
+    const p = placeFondatrice();
+
+    /* 1. Place acquise : il n'y a plus rien a faire, jamais. */
+    if (p && p.statut === "validee") return;
+
+    /* 2. Place reservee : on la valide des que les criteres sont atteints. */
+    if (p && p.numero) {
+      const place = await Store.placeFondatrice(p.numero);
+      /* Elle ne nous appartient plus (liberee, puis reprise par une autre
+         tribu) : on l'oublie, et on repartira du premier numero libre. */
+      if (!place || place.famille !== code) { await oublierPlace(); return; }
+      if (place.statut === "validee") { await inscrirePlace(p.numero, place.genre, "validee"); return; }
+      const av = avancementFondatrice();
+      if (place.genre === "pionniere" || av.ok) {
+        if (await Store.validerPlaceFondatrice(p.numero)) {
+          await inscrirePlace(p.numero, place.genre, "validee");
+          rendre();
+          feterFondatrice(code);
+        }
+        return;
+      }
+      if (av.expiree) { await Store.libererPlaceFondatrice(p.numero); await oublierPlace(); }
+      return;
+    }
+
+    /* 3. Aucune place : on en reserve une, au plus une fois par jour et par
+       appareil — inutile de relire les 100 places a chaque ouverture. */
+    const cle = "tribu:fondatrice:" + code;
+    const jour = new Date().toISOString().slice(0, 10);
+    try {
+      if (localStorage.getItem(cle) === jour) return;
+      localStorage.setItem(cle, jour);
+    } catch (e) { /* memoire du navigateur indisponible : on tente quand meme */ }
+    await reserverUnePlace(code);
+  } catch (err) {
+    console.warn("Programme Familles Fondatrices :", err);
+  }
+}
+
+/* Prend le premier numero libre. Si deux tribus visent le meme au meme
+   instant, c'est le SERVEUR qui tranche : la seconde reservation est refusee,
+   et on passe simplement au numero suivant. */
+async function reserverUnePlace(code) {
+  const prises = await Store.placesFondatrices();
+  if (!prises) return;                       // liste illisible : on reessaiera
+  const occupe = {};
+  prises.forEach((p) => { occupe[String(p.numero)] = p; });
+  const genre = genreDeLaTribu();
+
+  for (let n = 1; n <= PROGRAMME.places; n++) {
+    const deja = occupe[String(n)];
+    if (deja) {
+      /* Le menage : une place oubliee depuis plus de 7 jours redevient
+         disponible. Les regles autorisent n'importe quelle tribu a la
+         liberer — c'est ainsi que le pot se remplit, sans serveur. */
+      if (!placePerimee(deja)) continue;
+      if (!(await Store.libererPlaceFondatrice(n))) continue;
+    }
+    /* On annonce le numero chez soi AVANT de le reserver : c'est ce que les
+       regles verifient, et c'est ce qui empeche d'en viser deux. */
+    if (!(await inscrirePlace(n, genre, "reservee"))) return;
+    if (!(await Store.reserverPlaceFondatrice(n, genre, code))) continue;
+    /* Une pionniere a deja fait ses preuves : validee dans la foulee. */
+    if (genre === "pionniere" && await Store.validerPlaceFondatrice(n)) {
+      await inscrirePlace(n, genre, "validee");
+      rendre();
+      feterFondatrice(code);
+      return;
+    }
+    rendre();
+    return;
+  }
+  /* Les 100 places sont prises : on n'annonce rien chez soi. */
+  await oublierPlace();
 }
 
 /* Deconnexion : l'appareil reste autorise, on revient juste au choix du profil. */
@@ -2792,6 +3664,55 @@ const Actions = {
       parQui: moi && moi.id, creeLe: new Date().toISOString()
     });
     sauver("courses");
+  },
+
+  /* Renouveler les cadeaux proposés par l'application, sans toucher à ceux
+     que la famille a inventés. Un cadeau présent dans les deux listes n'est
+     pas retiré puis recréé : il reste tel quel, avec son coût éventuellement
+     modifié. Les points déjà gagnés ne bougent pas. */
+  async remplacerCadeauxDeDepart() {
+    if (!estAdmin()) { toast("Seul un administrateur peut mettre les cadeaux à jour"); return; }
+    const bilan = cadeauxAremplacer();
+    if (!bilan.aRetirer.length && !bilan.aAjouter.length) {
+      toast("La liste est déjà à jour");
+      return;
+    }
+    const morceaux = [];
+    if (bilan.aRetirer.length) {
+      morceaux.push(bilan.aRetirer.length + " ancien" + (bilan.aRetirer.length > 1 ? "s" : "") +
+        " cadeau" + (bilan.aRetirer.length > 1 ? "x" : "") + " de l'application " +
+        (bilan.aRetirer.length > 1 ? "seront retirés" : "sera retiré"));
+    }
+    if (bilan.aAjouter.length) {
+      morceaux.push(bilan.aAjouter.length + " nouveau" + (bilan.aAjouter.length > 1 ? "x" : "") +
+        (bilan.aAjouter.length > 1 ? " seront ajoutés" : " sera ajouté"));
+    }
+    const ok = await confirmer(morceaux.join(", et ") + ". Les cadeaux que vous avez créés " +
+      "vous-même ne sont pas touchés, et les points déjà gagnés non plus.",
+      { titre: "Mettre les cadeaux à jour", ok: "Mettre à jour" });
+    if (!ok) return;
+    const partis = new Set(bilan.aRetirer.map((c) => c.id));
+    etat.cadeaux = etat.cadeaux.filter((c) => !partis.has(c.id)).concat(bilan.aAjouter);
+    sauver("cadeaux");
+    toast("Cadeaux mis à jour ✨");
+  },
+
+  /* Retirer un rayon créé par la famille. Les articles qui s'y trouvaient
+     gardent ce nom : ils s'affichent alors dans un rayon inconnu, à leur
+     place alphabétique, jusqu'à ce qu'on les range ailleurs. On le dit avant. */
+  async supprimerRayon(nom) {
+    if (!estAdmin()) { toast("Seul un administrateur peut retirer un rayon"); return; }
+    const dedans = etat.stock.filter((s) => s.rayon === nom).length +
+      etat.courses.filter((c) => c.rayon === nom).length;
+    const ok = await confirmer("Retirer le rayon « " + nom + " » ?" + (dedans
+      ? " " + dedans + " article(s) y sont rangés : ils garderont ce nom jusqu'à ce que vous les changiez."
+      : ""), { titre: "Retirer un rayon", ok: "Retirer", danger: true });
+    if (!ok) return;
+    etat.reglages = Object.assign({}, etat.reglages, {
+      rayonsPerso: rayonsPerso().filter((r) => r.nom !== nom)
+    });
+    sauver("reglages");
+    toast("Rayon retiré");
   },
 
   /* --- Réserve ---
@@ -3208,6 +4129,21 @@ const Invitations = {
     const pourMoi = !!(moi && pourMembreId && pourMembreId === moi.id);
     if (!estAdmin() && !pourMoi) return null;
     const cible = pourMembreId ? membre(pourMembreId) : null;
+
+    /* Un profil d'avant le chiffrement porte encore son code EN CLAIR. Il ne
+       doit jamais entrer tel quel dans une invitation (revue du 12/09/2026) :
+       on le hache ici, et un administrateur en profite pour corriger le
+       profil lui-meme. Un membre qui s'invite seul n'a pas le droit d'ecrire
+       la liste des membres : son profil sera corrige a sa prochaine connexion
+       (migrerPinSiBesoin). Dans tous les cas, l'invitation ne transporte
+       qu'une empreinte, jamais le code. */
+    let verrou = cible ? { pinHash: cible.pinHash || null, pinSel: cible.pinSel || null } : null;
+    if (cible && !cible.pinHash && cible.pin && CRYPTO_DISPO) {
+      const h = await champsPin(cible.pin);
+      verrou = { pinHash: h.pinHash, pinSel: h.pinSel };
+      if (estAdmin()) { Object.assign(cible, h); await Store.ecrire(["membres"]); }
+    }
+
     const inv = {
       jeton: codeInvitation(),
       famille: etat.famille.code,
@@ -3216,8 +4152,8 @@ const Invitations = {
       profil: cible ? {
         id: cible.id, prenom: cible.prenom, emoji: cible.emoji || "🙂",
         role: cible.role || "membre",
-        pinHash: cible.pinHash || null, pinSel: cible.pinSel || null,
-        pin: cible.pinHash ? null : (cible.pin || null)
+        pinHash: verrou.pinHash, pinSel: verrou.pinSel,
+        pin: null
       } : null,
       profilRole: cible ? (cible.role || "membre") : "",
       creeePar: moi.id,
@@ -3495,7 +4431,8 @@ async function majRecettesSiBesoin() {
 const Partage = {
 
   /* Ce qui part vraiment dans le catalogue commun : la recette, et le seul
-     nom de la tribu. Ni code de famille secret, ni prénoms, ni points. */
+     nom de la tribu, plus son repere technique (familleRef) pour pouvoir la
+     retirer — il ne donne aucun acces. Ni prenoms, ni points (revue du 12/09/2026). */
   ficheDe(r) {
     return {
       id: id(),
@@ -4332,8 +5269,13 @@ function ingredientsDeLaSemaine(cleSem) {
       unite: principal.unite,
       besoinTexte: total.texte
     };
-  }).sort((a, b) =>
-    RAYONS.indexOf(a.rayon) - RAYONS.indexOf(b.rayon) || a.nom.localeCompare(b.nom));
+  /* Même ordre qu'à l'écran : alphabétique, « À catégoriser » en tête. Avant,
+     ce tri lisait la POSITION dans la liste des rayons — un rayon créé par la
+     famille en serait absent, et se serait retrouvé tout en haut. */
+  }).sort((a, b) => {
+    if (a.rayon !== b.rayon) return ordreRayons([a.rayon, b.rayon])[0] === a.rayon ? -1 : 1;
+    return a.nom.localeCompare(b.nom);
+  });
 }
 
 
@@ -4695,9 +5637,10 @@ const TITRES = {
   accueil: ["Accueil", ""],
   taches: ["Tâches", "Qui fait quoi"],
   courses: ["Courses", "Liste partagée"],
+  reserve: ["Ma réserve", "Ce qu'on garde à la maison"],
   menus: ["Menus", "Repas de la semaine"],
   notes: ["Rappels", "À ne pas oublier"],
-  points: ["Points & cadeaux", "La boutique de la famille"],
+  points: ["Points & cadeaux", "Les moments à partager"],
   recettes: ["Mes recettes", "Bibliothèque de plats"],
   admin: ["Administration", "Réglages de la famille"]
 };
@@ -4713,7 +5656,8 @@ function rendre() {
     ? maj.length + " mise(s) à jour disponible(s)" : "Mon profil";
   $("#titre-vue").textContent = TITRES[v] ? TITRES[v][0] : "Ma Tribu";
   $("#sous-titre-vue").textContent = v === "accueil" ? etat.famille.nom : (TITRES[v] ? TITRES[v][1] : "");
-  $("#mes-points").textContent = pointsDe(moi.id);
+  $("#btn-points").hidden = !pointsActifs();
+  $("#mes-points").textContent = pointsActifs() ? pointsDe(moi.id) : "0";
 
   document.querySelectorAll(".vue").forEach((s) => s.classList.remove("active"));
   const cible = $("#vue-" + v);
@@ -4775,6 +5719,10 @@ const ONGLETS = [
   { vue: "accueil", nom: "Accueil", emoji: "🏡", obligatoire: true },
   { vue: "taches", nom: "Tâches", emoji: "🧹" },
   { vue: "courses", nom: "Courses", emoji: "🛒" },
+  /* La réserve avait son onglet caché DANS l'écran Courses : personne ne la
+     trouvait. Elle a maintenant sa place dans la barre du bas, et reste
+     masquable comme les autres (demande d'Amandine, 12/09/2026). */
+  { vue: "reserve", nom: "Réserve", emoji: "🥫" },
   { vue: "menus", nom: "Menus", emoji: "🍽️" },
   { vue: "recettes", nom: "Recettes", emoji: "📖" },
   { vue: "notes", nom: "Rappels", emoji: "🔔" }
@@ -4785,6 +5733,17 @@ const ONGLETS = [
    ne sont pas des préférences d'appareil, ils valent pour toute la maison. */
 function reglagesFamille() {
   return Object.assign({}, REGLAGES_DEFAUT, etat.reglages || {});
+}
+
+/* Le système de points est-il en service ? Réglage de famille, comme
+   l'objectif commun : certaines maisons veulent des tâches sans compétition
+   ni récompenses. Activé par défaut — les familles existantes ne changent
+   pas. Éteint, il masque le compteur de l'en-tête, l'écran Points & cadeaux,
+   le classement, l'objectif commun et les « +N pts » ; les tâches, « c'est
+   fait » et la validation restent. Rien n'est effacé : l'historique repart
+   à l'identique si on le rallume. */
+function pointsActifs() {
+  return reglagesFamille().points !== false;
 }
 function nbConvives() {
   const n = Number(reglagesFamille().convives);
@@ -4867,6 +5826,7 @@ const FAB = {
   taches: { admin: true, action: "tache-nouvelle" },
   courses: { admin: false, action: "course-nouvelle" },
   stock: { admin: false, action: "stock-nouveau" },
+  reserve: { admin: false, action: "stock-nouveau" },
   notes: { admin: false, action: "note-nouvelle" },
   recettes: { admin: false, action: "recette-nouvelle" },
   points: { admin: true, action: "cadeau-nouveau" }
@@ -4885,20 +5845,28 @@ function aller(vue) {
   /* Un onglet masqué ne doit pas rester atteignable par un vieux raccourci
      ou par la vue mémorisée : on retombe sur l'accueil, jamais sur du vide. */
   if (vue !== "accueil" && vue !== "admin" && ongletMasque(vue)) vue = "accueil";
+  /* Points éteints : l'écran Points & cadeaux n'est plus atteignable, même
+     par un vieux raccourci ou par la vue mémorisée. */
+  if (vue === "points" && !pointsActifs()) vue = "accueil";
   ui.vue = vue;
   memoriserVue();
   window.scrollTo({ top: 0 });
   rendre();
 }
 
-/* On retient l'onglet ouvert : recharger la page ne doit pas ramener
-   brutalement à l'accueil au milieu de ce qu'on était en train de faire. */
+/* On retient l'onglet ouvert ET le moment. Recharger la page ne doit pas
+   ramener brutalement à l'accueil au milieu des courses ; mais rouvrir
+   l'application le lendemain n'est pas la même chose que revenir d'un coup
+   d'œil sur une autre appli. D'où le délai : on reprend si c'est récent,
+   sinon on ouvre sur l'accueil (choix d'Amandine, 12 septembre 2026). */
+const DELAI_REPRISE_VUE = 1800000;        // 30 minutes
 function memoriserVue() {
   try {
     localStorage.setItem("tribu:vue", JSON.stringify({
       vue: ui.vue,
       ongletCourses: ui.ongletCourses,
-      listeActive: ui.listeActive || null
+      listeActive: ui.listeActive || null,
+      le: Date.now()
     }));
   } catch (e) { /* sans importance */ }
 }
@@ -4907,6 +5875,9 @@ function restaurerVue() {
   let v;
   try { v = JSON.parse(localStorage.getItem("tribu:vue") || "null"); } catch (e) { return; }
   if (!v || !v.vue || !Vues[v.vue]) return;
+  /* Trop ancien, ou souvenir d'une version qui ne datait pas encore : on
+     ouvre sur l'accueil. Le cas « sans date » n'arrive qu'une fois. */
+  if (!v.le || Date.now() - v.le > DELAI_REPRISE_VUE) return;
   /* L'administration n'a pas de sens pour un membre ordinaire. */
   if (v.vue === "admin" && !estAdmin()) return;
   ui.vue = v.vue;
@@ -4988,6 +5959,8 @@ document.addEventListener("click", (e) => {
     case "recette-nouvelle": Formulaires.recette(null); break;
     case "recette-editer": Formulaires.recette(v); break;
     case "recette-voir": Formulaires.consulterRecette(v); break;
+    case "recette-favori": basculerFavori(v); break;
+    case "cadeaux-defaut": Actions.remplacerCadeauxDeDepart(); break;
     case "recettes-partagees": Formulaires.catalogue(); break;
     case "recettes-maj": Formulaires.majRecettes(); break;
     case "recettes-filtre": {
@@ -5005,6 +5978,33 @@ document.addEventListener("click", (e) => {
       break;
     case "recettes-tri": ui.triRecettes = b.dataset.valeur; rendre(); break;
     case "recettes-filtres": ui.filtresOuverts = !ui.filtresOuverts; rendre(); break;
+
+    /* Réserve : replier un rayon, ou tous. Retenu sur l'appareil. */
+    case "rayon-nouveau": Formulaires.rayon(); break;
+    case "rayon-suppr": Actions.supprimerRayon(b.dataset.valeur); break;
+
+    /* Réserve : passer du côté alimentaire au côté maison. */
+    case "reserve-cote":
+      ui.coteReserve = b.dataset.valeur === "maison" ? "maison" : "alimentaire";
+      try { localStorage.setItem("tribu:coteReserve", ui.coteReserve); } catch (e) { /* sans importance */ }
+      rendre();
+      break;
+    case "stock-rayon": {
+      const liste = (ui.rayonsReplies || []).slice();
+      const k = liste.indexOf(b.dataset.valeur);
+      if (k === -1) liste.push(b.dataset.valeur); else liste.splice(k, 1);
+      ui.rayonsReplies = liste;
+      memoriserListe("tribu:rayonsReplies", liste);
+      rendre();
+      break;
+    }
+    case "stock-replier-tout": {
+      const tous = etat.stock.map((s) => s.rayon).filter((r, i, t) => t.indexOf(r) === i);
+      ui.rayonsReplies = b.dataset.valeur === "replier" ? tous : [];
+      memoriserListe("tribu:rayonsReplies", ui.rayonsReplies);
+      rendre();
+      break;
+    }
     case "recettes-lettre": {
       allerAuBloc(document.getElementById("lettre-" + b.dataset.valeur));
       break;
@@ -5071,6 +6071,7 @@ document.addEventListener("click", (e) => {
     case "mon-appareil": Formulaires.monAppareil(); break;
     case "effacer-appareil": Formulaires.effacerAppareil(); break;
     case "demenagement": Formulaires.demenagement(); break;
+    case "fondatrice": Formulaires.fondatrice(); break;
     case "masquer-conseil-icone":
       localStorage.setItem("tribu:conseilEcranAccueil", "1");
       rendre();
@@ -5078,15 +6079,22 @@ document.addEventListener("click", (e) => {
     case "maj-liste": Formulaires.misesAJour(); break;
     case "deconnexion": fermerFeuille(); deconnecter(); break;
 
-    case "theme": {
-      const actuel = document.documentElement.dataset.theme || "auto";
-      const suivant = actuel === "auto" ? "light" : actuel === "light" ? "dark" : "auto";
-      if (suivant === "auto") delete document.documentElement.dataset.theme;
-      else document.documentElement.dataset.theme = suivant;
-      localStorage.setItem("tribu:theme", suivant);
-      Formulaires.menuProfil();
+    /* Apparence : le mode clair/sombre ET la palette, dans la même fiche.
+       Chaque choix se voit tout de suite et la fiche se rouvre pour montrer
+       ce qui est retenu. Tout cela ne vaut que pour cet appareil. */
+    case "apparence": Formulaires.apparence(); break;
+    case "theme-choix": {
+      const v = b.dataset.valeur || "auto";
+      if (v === "auto") delete document.documentElement.dataset.theme;
+      else document.documentElement.dataset.theme = v;
+      try { localStorage.setItem("tribu:theme", v); } catch (e) { /* sans importance */ }
+      Formulaires.apparence();
       break;
     }
+    case "palette":
+      appliquerPalette(b.dataset.valeur || "");
+      Formulaires.apparence();
+      break;
     /* Une panne reseau ne doit pas condamner l'appareil au mode local pour la
        duree de la session : on retente proprement, en rechargeant. */
     case "reessayer":
@@ -5135,7 +6143,43 @@ document.addEventListener("input", (e) => {
   rendre();
 });
 
+/* Recherche dans la réserve */
+document.addEventListener("input", (e) => {
+  if (e.target.id !== "champ-recherche-stock") return;
+  ui.rechercheStock = e.target.value;
+  ui.focus = "champ-recherche-stock";
+  rendre();
+});
+
+/* Recherche dans la liste de courses */
+document.addEventListener("input", (e) => {
+  if (e.target.id !== "champ-recherche-courses") return;
+  ui.rechercheCourses = e.target.value;
+  ui.focus = "champ-recherche-courses";
+  rendre();
+});
+
 /* Devine le rayon d'un article */
+/* Expressions prioritaires : des noms composés dont le mot principal appartient
+   à un autre rayon. Une sauce tomate n'est pas un légume, l'eau de javel n'est
+   pas une boisson, le lait de coco n'est pas de la crèmerie. Testées AVANT les
+   listes de mots ci-dessous, sur le nom entier. */
+const EXPRESSIONS_RAYONS = [
+  ["sauce tomate", "Épicerie"], ["coulis de tomate", "Épicerie"],
+  ["concentré de tomate", "Épicerie"], ["concentre de tomate", "Épicerie"],
+  ["tomate pelée", "Épicerie"], ["tomate pelee", "Épicerie"],
+  ["tomates pelées", "Épicerie"], ["tomates pelees", "Épicerie"],
+  ["tomate concassée", "Épicerie"], ["tomate concassee", "Épicerie"],
+  ["tomates concassées", "Épicerie"], ["tomates concassees", "Épicerie"],
+  ["sauce soja", "Épicerie"], ["jus de citron", "Épicerie"],
+  ["pâte à tartiner", "Épicerie"], ["pate a tartiner", "Épicerie"],
+  ["beurre de cacahuète", "Épicerie"], ["beurre de cacahuete", "Épicerie"],
+  ["lait de coco", "Épicerie"], ["lait de soja", "Épicerie"],
+  ["lait d'amande", "Épicerie"], ["lait d amande", "Épicerie"],
+  ["eau de javel", "Entretien"], ["savon de marseille", "Entretien"],
+  ["poisson pané", "Surgelés"], ["poisson pane", "Surgelés"]
+];
+
 const MOTS_RAYONS = {
   "Fruits & légumes": ["pomme", "banane", "tomate", "salade", "carotte", "oignon", "ail ", "courgette",
     "pomme de terre", "pommes de terre", "citron", "fraise", "poireau", "champignon", "brocoli",
@@ -5151,19 +6195,46 @@ const MOTS_RAYONS = {
   "Surgelés": ["surgelé", "surgele", "glace", "frites", "pizza surgelée"],
   "Boissons": ["eau", "jus", "vin", "bière", "biere", "soda", "café", "cafe", "thé", "sirop"],
   "Entretien": ["lessive", "liquide vaisselle", "éponge", "eponge", "papier toilette", "sopalin",
-    "sac poubelle", "nettoyant", "savon", "shampoing", "dentifrice", "mouchoir", "couche"]
+    "sac poubelle", "nettoyant", "javel", "balai", "serpill", "adoucissant", "detergent", "détergent"],
+  /* L'hygiène quitte l'entretien : on ne range pas son dentifrice avec la
+     lessive, et on ne le cherche pas au même endroit. */
+  "Hygiène": ["savon", "shampoing", "shampooing", "gel douche", "dentifrice", "brosse à dents",
+    "mouchoir", "couche", "coton", "rasoir", "déodorant", "deodorant", "crème solaire",
+    "serviette hygiénique", "tampon", "papier hygi"],
+  "Maison": ["pile", "ampoule", "bougie", "allumette", "scotch", "colle", "vis ", "clou",
+    "sac congélation", "film étirable", "papier cuisson", "aluminium", "vaisselle jetable"],
+  "Animaux": ["croquette", "litière", "litiere", "pâtée", "patee", "friandise chien",
+    "friandise chat", "foin", "graines pour"],
+  /* EN DERNIER, volontairement. L'épicerie n'existait pas dans ce dictionnaire :
+     elle servait de valeur par défaut, et tout l'inconnu y tombait en silence.
+     Maintenant que l'inconnu va dans « À catégoriser », il faut reconnaître les
+     basiques, sinon ce rayon deviendrait un fourre-tout.
+     Placée à la fin parce que la comparaison se fait sur des morceaux de mots :
+     « liquide vaisselle » contient « sel ». Les rayons précis passent d'abord. */
+  "Épicerie": ["riz", "pâte", "pate", "farine", "sucre", "sel", "poivre", "huile", "vinaigre",
+    "conserve", "lentille", "pois chiche", "semoule", "couscous", "quinoa", "boulgour",
+    "céréale", "cereale", "biscuit", "gâteau", "gateau", "chocolat", "confiture", "miel",
+    "compote", "moutarde", "ketchup", "mayonnaise", "bouillon", "épice", "epice", "levure",
+    "sachet de", "bocal", "boîte de", "boite de", "coulis", "concentré de", "concentre de"]
 };
 function devinerRayon(nom) {
   const n = nom.toLowerCase();
   for (const r of etat.recettes) {
     for (const i of (r.ingredients || [])) {
-      if (i.nom && i.nom.toLowerCase() === n) return i.rayon || "Épicerie";
+      if (i.nom && i.nom.toLowerCase() === n) return i.rayon || "À catégoriser";
     }
+  }
+  /* Les expressions d'abord : « sauce tomate » avant « tomate ». */
+  for (const e of EXPRESSIONS_RAYONS) {
+    if (n.includes(e[0])) return e[1];
   }
   for (const rayon in MOTS_RAYONS) {
     if (MOTS_RAYONS[rayon].some((m) => n.includes(m))) return rayon;
   }
-  return "Épicerie";
+  /* Non reconnu : on le dit, au lieu de le ranger d'office en « Épicerie ».
+     Le rayon « À catégoriser » s'affiche en tête de la réserve et de la liste
+     de courses : on le corrige d'un geste, quand on veut. */
+  return "À catégoriser";
 }
 
 /* ============================ 11. Ecran de panne ============================ */
@@ -5266,6 +6337,7 @@ async function demarrer() {
 async function demarrerVraiment() {
   const th = localStorage.getItem("tribu:theme");
   if (th && th !== "auto") document.documentElement.dataset.theme = th;
+  appliquerPalette(paletteActuelle());     // la palette choisie sur cet appareil
 
   /* Sur téléphone, la mémoire d'un site peut être effacée pour faire de la
      place. Cette demande met la session à l'abri quand le navigateur la

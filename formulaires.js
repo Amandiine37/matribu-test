@@ -47,7 +47,7 @@ function valeursMulti(f, role) {
   return Array.from(f.querySelectorAll('[data-role="' + role + '"] .puce.on')).map((b) => b.dataset.val);
 }
 function selectRayon(valeur) {
-  return '<select name="rayon">' + RAYONS.map((r) =>
+  return '<select name="rayon">' + ordreRayons(rayonsTous()).map((r) =>
     '<option value="' + esc(r) + '"' + (r === valeur ? " selected" : "") + ">" + esc(r) + "</option>").join("") + "</select>";
 }
 function selectUnite(valeur, nom) {
@@ -85,8 +85,10 @@ Formulaires.tache = function (tid) {
       { val: "jour", html: "Chaque jour" },
       { val: "semaine", html: "Chaque semaine" },
       { val: "mois", html: "Chaque mois" }], [cour.frequence]) +
-    '<label class="champ"><span>Points gagnés</span>' +
-    '<input type="number" name="points" value="' + (cour.points || 10) + '" min="0" max="500" required></label>' +
+    (pointsActifs()
+      ? '<label class="champ"><span>Points gagnés</span>' +
+        '<input type="number" name="points" value="' + (cour.points || 10) + '" min="0" max="500" required></label>'
+      : "") +
     '<label class="champ"><span>Qui peut s\'en occuper</span></label>' +
     (etat.membres.length
       ? puceMultiple("part", etat.membres.map((m) => ({ val: m.id, html: esc(m.emoji + " " + m.prenom) })),
@@ -142,14 +144,20 @@ Formulaires.tache = function (tid) {
         t.nom = String(d.get("nom")).trim();
         t.emoji = emojiChoisi(f, "🧹");
         if (t.frequence !== freq) { t.frequence = freq; t.decalage = 0; }
-        t.points = Number(d.get("points")) || 0;
+        /* Points éteints : le champ n'est pas affiché. On GARDE la valeur
+           existante, sinon modifier une tâche la remettrait à zéro et le
+           réglage ne serait plus réversible sans perte. */
+        if (pointsActifs()) t.points = Number(d.get("points")) || 0;
         t.participants = part;
         t.rotation = !!d.get("rotation");
         t.actif = !d.get("pause");
       } else {
         const nouvelle = {
           id: id(), nom: String(d.get("nom")).trim(), emoji: emojiChoisi(f, "🧹"),
-          frequence: freq, points: Number(d.get("points")) || 0,
+          frequence: freq,
+          /* Même raison : sans le champ, on pose la valeur habituelle, pour
+             que la tâche compte normalement si les points reviennent. */
+          points: pointsActifs() ? (Number(d.get("points")) || 0) : 10,
           participants: part, rotation: !!d.get("rotation"),
           decalage: 0, actif: !d.get("pause"), creeLe: new Date().toISOString()
         };
@@ -466,8 +474,8 @@ Formulaires.retour = function () {
     '<label class="champ"><span>Détails (que faisiez-vous ? qu\'attendiez-vous ?)</span>' +
     '<textarea name="detail" maxlength="1500" required ' +
     'placeholder="J\'étais dans l\'onglet Tâches, j\'ai appuyé sur…"></textarea></label>' +
-    '<p class="aide">Sont joints automatiquement : votre prénom, le nom de la tribu, ' +
-    "la version de l'application et le type de téléphone. Rien d'autre.</p>" +
+    '<p class="aide">Sont joints automatiquement : votre prénom, le nom et le repère de la tribu, ' +
+    "la version de l'application et le type d'appareil (par exemple « iPhone · Safari »). Rien d'autre.</p>" +
     '<div class="rangee-btn" style="margin-top:1.2rem">' +
     '<button type="button" class="btn" data-action="fermer">Annuler</button>' +
     '<button type="submit" class="btn principal">Envoyer</button></div></form>';
@@ -488,7 +496,9 @@ Formulaires.retour = function () {
         famille: etat.famille.code || "?",
         nomFamille: etat.famille.nom || "",
         version: VERSION,
-        appareil: navigator.userAgent.slice(0, 200),
+        /* Un resume (« iPhone · Safari »), pas le user-agent complet : c'est
+           ce que l'ecran annonce, et c'est tout ce qui sert (revue du 12/09/2026). */
+        appareil: typeAppareil(navigator.userAgent),
         envoyeLe: new Date().toISOString()
       };
       const ok = await Store.envoyerRetour(retour);
@@ -871,6 +881,14 @@ Formulaires.reglagesFamille = function () {
     "Mettez 0 pour ne pas compter la cuisine.</p>" +
 
     '<label class="champ" style="display:flex;gap:.6rem;align-items:flex-start">' +
+    '<input type="checkbox" name="points"' + (g.points !== false ? " checked" : "") +
+    ' style="width:auto;margin-top:.25rem"><span style="margin:0">Système de points' +
+    '<br><small style="font-weight:400">Points des tâches, classement, cadeaux et objectif ' +
+    "commun. Décoché, tout cela disparaît de l'application : les tâches restent, avec " +
+    "« c'est fait » et la validation. Rien n'est effacé, et tout revient si vous le " +
+    "réactivez.</small></span></label>" +
+
+    '<label class="champ" style="display:flex;gap:.6rem;align-items:flex-start">' +
     '<input type="checkbox" name="antiGaspi"' + (g.antiGaspi !== false ? " checked" : "") +
     ' style="width:auto;margin-top:.25rem"><span style="margin:0">Anti-gaspillage' +
     '<br><small style="font-weight:400">Le générateur de menus propose en priorité ' +
@@ -886,6 +904,7 @@ Formulaires.reglagesFamille = function () {
       if (!(n >= 1 && n <= 30)) { toast("Entre 1 et 30 personnes"); return; }
       etat.reglages = Object.assign({}, etat.reglages, {
         convives: n,
+        points: !!d.get("points"),
         pointsRepas: Math.max(0, Math.min(200, Number(d.get("pointsRepas")) || 0)),
         antiGaspi: !!d.get("antiGaspi")
       });
@@ -1263,7 +1282,7 @@ Formulaires.recette = function (rid) {
     (r && estRecettePerso(r)
       ? '<button type="button" class="btn plein ' + (r.partageId ? "doux" : "") +
       '" data-role="partager" style="margin-bottom:1rem">' +
-      (r.partageId ? "🌍 Partagée avec les autres familles" : "🌍 Partager avec les autres familles") +
+      (r.partageId ? "🏘️ Partagée avec les autres familles" : "🏘️ Partager avec les autres familles") +
       "</button>"
       : "") +
     "<hr class=\"sep\">" +
@@ -1523,7 +1542,7 @@ Formulaires.membre = async function (mid) {
     '<p class="aide" style="margin:-.6rem 0 1rem">Un administrateur valide les tâches, accorde les cadeaux ' +
     "et gère les réglages de la famille.</p>" +
     '<label class="champ"><span>Code à 4 chiffres' + (m ? " (laisser vide pour ne pas changer)" : "") + "</span>" +
-    '<input type="tel" name="pin" inputmode="numeric" maxlength="4" placeholder="' + (m ? "••••" : "1234") + '">' +
+    champPin('placeholder="' + (m ? "••••" : "1234") + '"') +
     "</label></div>" +
 
     /* Ses appareils connectés, et le moyen d'en retirer un (étape 2). */
@@ -1815,6 +1834,109 @@ Formulaires.invitation = function () {
   });
 };
 
+/* ==================== FAMILLES FONDATRICES ====================
+
+   La fiche du programme : le numéro obtenu, ou ce qu'il reste à faire pour
+   confirmer sa place. `feter` = le grand moment, juste après la validation ;
+   elle s'ouvre alors d'elle-même, une seule fois par appareil. */
+
+Formulaires.fondatrice = function (feter) {
+  const p = placeFondatrice();
+  if (!p || !p.numero) return;
+  const pionniere = p.genre === "pionniere";
+  const nom = pionniere ? "Famille Pionnière" : "Famille Fondatrice";
+  const emoji = pionniere ? "🌱" : "🏅";
+  const validee = estFondatrice();
+  const av = avancementFondatrice();
+
+  const critere = (fait, titre, detail) =>
+    '<div class="ligne' + (fait ? " fait" : "") + '">' +
+    '<span class="etape' + (fait ? " ok" : "") + '">' + (fait ? "✓" : "") + "</span>" +
+    '<div class="ligne-corps"><b>' + titre + "</b><small>" + detail + "</small></div></div>";
+
+  const avantage = (ico, titre, detail) =>
+    '<div class="ligne"><span style="font-size:1.2rem">' + ico + "</span>" +
+    '<div class="ligne-corps"><b>' + titre + "</b><small>" + detail + "</small></div></div>";
+
+  const html =
+    (feter
+      ? '<div class="bandeau info">🎉<div><b>Vous êtes officiellement la ' + nom + " " +
+        numeroFondatrice(p.numero) + " de Ma Tribu !</b><br>" +
+        "Ce numéro est le vôtre, et il le restera.</div></div>"
+      : "") +
+
+    '<div class="carte" style="text-align:center">' +
+    '<div style="font-size:2.6rem;line-height:1">' + emoji + "</div>" +
+    '<div style="font-family:var(--font-display);font-size:1.15rem;margin:.35rem 0 0">' +
+    nom + "</div>" +
+    '<div style="font-family:var(--font-display);font-size:2.1rem;font-weight:700;line-height:1.15">' +
+    numeroFondatrice(p.numero) + "</div>" +
+    '<div class="aide" style="margin-top:.35rem">' +
+    (validee
+      ? (pionniere
+        ? "Votre tribu était là avant le programme. Ce statut vous est offert, sans condition."
+        : "Acquis, et définitif.")
+      : "Place réservée pendant " + PROGRAMME.jours + " jours") +
+    "</div></div>" +
+
+    (validee ? "" :
+      '<div class="carte">' +
+      '<div class="carte-titre">Ce qu\'il reste à faire</div>' +
+      critere(av.membres >= PROGRAMME.membres,
+        "Être au moins " + PROGRAMME.membres + " dans la tribu",
+        av.membres + " membre" + (av.membres > 1 ? "s" : "") + " pour l'instant") +
+      critere(av.validees >= PROGRAMME.validees,
+        PROGRAMME.validees + " tâches ou repas validés",
+        av.validees + " sur " + PROGRAMME.validees) +
+      critere(av.jours >= PROGRAMME.joursUtiles,
+        "Utiliser l'application " + PROGRAMME.joursUtiles + " jours différents",
+        av.jours + " jour" + (av.jours > 1 ? "s" : "") + " pour l'instant") +
+      '<p class="aide" style="margin-top:.7rem">' +
+      (av.resteJours > 1 ? "Il vous reste " + av.resteJours + " jours."
+        : av.resteJours === 1 ? "C'est le dernier jour." : "Plus que quelques heures.") +
+      " Passé ce délai, la place retourne aux autres familles.</p>" +
+      "</div>") +
+
+    '<div class="carte">' +
+    '<div class="carte-titre">Ce que cela vous donne</div>' +
+    avantage(emoji, "Un badge permanent",
+      "Il reste sur votre accueil, quoi qu'il arrive ensuite.") +
+    avantage("🔢", "Un numéro unique",
+      "Le " + numeroFondatrice(p.numero) + " n'appartient qu'à votre tribu.") +
+    avantage("🧪", "Les nouveautés en avant-première",
+      "Vous les essayez avant tout le monde.") +
+    avantage("🗳️", "Votre voix sur la suite",
+      "Vos idées passent en premier.") +
+    '<button class="btn doux plein" data-action="retour" style="margin-top:.6rem">' +
+    "💡 Proposer une idée</button>" +
+    "</div>" +
+
+    '<p class="aide" style="text-align:center" id="places-restantes"></p>' +
+
+    '<button class="btn plein' + (feter ? " principal" : "") + '" data-action="fermer" ' +
+    'style="margin-top:.4rem">' + (feter ? "Merci !" : "Fermer") + "</button>";
+
+  ouvrirFeuille(feter ? "🎉 " + nom + " " + numeroFondatrice(p.numero) : nom, html, (f) => {
+    /* « Proposer une idée » ouvre une autre fiche : on ferme celle-ci avant,
+       sinon la seconde remplacerait la première sans qu'on sache d'où on vient. */
+    f.querySelectorAll('[data-action="retour"]')
+      .forEach((b) => b.addEventListener("click", fermerFeuille));
+
+    /* Le compteur de places demande une lecture au serveur : il s'affiche
+       quand elle arrive, sans faire attendre la fiche. S'il n'arrive pas,
+       la ligne reste vide — ce n'est qu'un ornement. */
+    if (!Store.placesFondatrices) return;
+    Store.placesFondatrices().then((places) => {
+      const zone = f.querySelector("#places-restantes");
+      if (!zone || !places) return;
+      const reste = Math.max(0, PROGRAMME.places - places.length);
+      zone.textContent = reste
+        ? reste + (reste > 1 ? " places encore libres sur " : " place encore libre sur ") + PROGRAMME.places
+        : "Les " + PROGRAMME.places + " places sont prises.";
+    }).catch(() => { });
+  });
+};
+
 /* ==================== DÉMÉNAGEMENT VERS matribu-app.fr ====================
 
    Ce qu'il faut comprendre pour que cette fiche ait du sens : une invitation
@@ -2063,11 +2185,83 @@ Formulaires.historique = function (mid) {
     html + '<button class="btn plein" data-action="fermer" style="margin-top:1.2rem">Fermer</button>');
 };
 
+/* ================================ RAYONS ================================
+
+   Les rayons fournis ne couvrent pas toutes les maisons : bébé, jardin,
+   pharmacie, cave… La famille ajoute les siens, et dit de quel côté ils vont
+   — alimentaire ou maison. Rangés dans les réglages : un administrateur les
+   écrit, ils valent pour tout le monde. */
+Formulaires.rayon = function () {
+  if (!estAdmin()) { toast("Seul un administrateur peut ajouter un rayon"); return; }
+
+  const html = '<form id="f-rayon">' +
+    '<label class="champ"><span>Nom du rayon</span>' +
+    '<input type="text" name="nom" required maxlength="24" autocomplete="off" ' +
+    'placeholder="Bébé, Jardin, Pharmacie…"></label>' +
+    '<label class="champ"><span>De quel côté de la réserve ?</span></label>' +
+    puceMultiple("cote", [
+      { val: "alimentaire", html: "🥫 Alimentaire" },
+      { val: "maison", html: "🧴 Maison" }], ["alimentaire"]) +
+    '<p class="aide" style="margin-top:.7rem">Il apparaîtra dans la réserve, dans la liste de ' +
+    "courses et dans la fiche de chaque article. L'application ne devinera pas toute seule " +
+    "qu'un produit lui appartient : vous le choisirez à la main.</p>" +
+    boutonsFormulaire("Ajouter", false) + "</form>";
+
+  ouvrirFeuille("Nouveau rayon", html, (f) => {
+    brancherMulti(f, "cote", true);
+    f.onsubmit = (ev) => {
+      ev.preventDefault();
+      const nom = String(new FormData(ev.target).get("nom") || "").trim();
+      if (!nom) { toast("Donnez un nom au rayon"); return; }
+      if (rayonsTous().some((r) => pourChercher(r) === pourChercher(nom))) {
+        toast("Ce rayon existe déjà");
+        return;
+      }
+      etat.reglages = Object.assign({}, etat.reglages, {
+        rayonsPerso: rayonsPerso().concat([{ nom: nom, cote: valeursMulti(f, "cote")[0] || "alimentaire" }])
+      });
+      fermerFeuille();
+      sauver("reglages");
+      toast("Rayon « " + nom + " » ajouté");
+    };
+  });
+};
+
+/* ================================ APPARENCE ================================
+
+   Le mode clair/sombre et la palette de couleurs, dans la même fiche. Les
+   deux ne valent que pour CET appareil : chacun choisit ce qu'il préfère,
+   sans déranger le reste de la tribu et sans droits particuliers. */
+Formulaires.apparence = function () {
+  let th = "auto";
+  try { th = localStorage.getItem("tribu:theme") || "auto"; } catch (e) { /* sans importance */ }
+  const pal = paletteActuelle();
+  const pastille = (c) => '<span style="display:inline-block;width:.62rem;height:.62rem;' +
+    "border-radius:50%;background:" + c + ';border:1px solid rgba(0,0,0,.14);' +
+    'margin-right:.12rem;vertical-align:-1px"></span>';
+
+  const html =
+    '<p class="aide" style="margin:0 0 .9rem">Ces réglages ne concernent que cet appareil.</p>' +
+    '<label class="champ"><span>Mode</span></label>' +
+    '<div class="puces">' +
+    [["auto", "🌗 Automatique"], ["light", "☀️ Clair"], ["dark", "🌙 Sombre"]].map(([v, l]) =>
+      '<button class="puce' + (th === v ? " on" : "") + '" data-action="theme-choix" data-valeur="' +
+      v + '">' + l + "</button>").join("") + "</div>" +
+    '<label class="champ" style="margin-top:1rem"><span>Palette</span></label>' +
+    '<div class="puces">' + PALETTES.map((p) =>
+      '<button class="puce' + (pal === p.val ? " on" : "") + '" data-action="palette" data-valeur="' +
+      esc(p.val) + '">' + p.apercu.map(pastille).join("") + " " + p.emoji + " " + esc(p.nom) +
+      "</button>").join("") + "</div>" +
+    '<p class="aide" style="margin-top:.9rem">Le mode sombre existe pour chaque palette : ' +
+    "les deux réglages se combinent.</p>" +
+    '<button class="btn plein" data-action="fermer" style="margin-top:1rem">Fermer</button>';
+
+  ouvrirFeuille("🎨 Apparence", html);
+};
+
 /* ================================ MENU PROFIL ================================ */
 
 Formulaires.menuProfil = function () {
-  const th = localStorage.getItem("tribu:theme") || "auto";
-  const nomTheme = th === "light" ? "clair" : th === "dark" ? "sombre" : "automatique";
   const etatTexte = Store.mode === "nuage"
     ? '<span class="etat-connexion en-ligne"><i></i>Partagé avec la famille</span>'
     : '<span class="etat-connexion local"><i></i>Sur cet appareil uniquement</span>';
@@ -2087,9 +2281,11 @@ Formulaires.menuProfil = function () {
     '<span class="avatar">' + esc(moi.emoji || "🙂") + "</span>" +
     '<div class="ligne-corps"><b>' + esc(moi.prenom) + "</b><small>" +
     (estAdmin() ? "Administrateur" : "Membre") + " • " + esc(etat.famille.nom) + "</small></div>" +
-    '<span class="etiquette or">' + pointsDe(moi.id) + " pts</span></div>" +
+    (pointsActifs() ? '<span class="etiquette or">' + pointsDe(moi.id) + " pts</span>" : "") + "</div>" +
     '<p style="margin:.6rem 0 1rem">' + etatTexte + "</p>" + alerteCrypto +
-    '<button class="btn plein" data-action="aller" data-vue="points" style="margin-bottom:.5rem">🌟 Points & cadeaux</button>' +
+    (pointsActifs()
+      ? '<button class="btn plein" data-action="aller" data-vue="points" style="margin-bottom:.5rem">🌟 Points & cadeaux</button>'
+      : "") +
     '<button class="btn plein" data-action="aller" data-vue="recettes" style="margin-bottom:.5rem">📖 Mes recettes</button>' +
     (estAdmin()
       ? '<button class="btn plein" data-action="aller" data-vue="admin" style="margin-bottom:.5rem">⚙️ Administration</button>'
@@ -2100,7 +2296,7 @@ Formulaires.menuProfil = function () {
         '" style="margin-bottom:.5rem">📋 Mes appareils (' +
         appareilsDe(moi.id).length + ")</button>"
       : "") +
-    '<button class="btn plein" data-action="theme" style="margin-bottom:.5rem">🌓 Thème : ' + nomTheme + "</button>" +
+    '<button class="btn plein" data-action="apparence" style="margin-bottom:.5rem">🎨 Apparence</button>' +
     '<button class="btn plein" data-role="mon-profil" style="margin-bottom:.5rem">✏️ Modifier mon profil</button>' +
     "<hr class=\"sep\">" +
     '<button class="btn plein doux" data-action="retour" style="margin-bottom:.5rem">' +
@@ -2291,7 +2487,7 @@ Formulaires.monProfilSimple = function () {
     '<input type="text" name="prenom" value="' + esc(moi.prenom) + '" required maxlength="20"></label>' +
     '<label class="champ"><span>Avatar</span></label>' + grilleEmojis(EMOJIS_MEMBRES, moi.emoji) +
     '<label class="champ"><span>Nouveau code à 4 chiffres (facultatif)</span>' +
-    '<input type="tel" name="pin" inputmode="numeric" maxlength="4" placeholder="••••"></label>' +
+    champPin('placeholder="••••"') + "</label>" +
     '<div class="rangee-btn" style="margin-top:1.2rem">' +
     '<button type="button" class="btn" data-action="fermer">Annuler</button>' +
     '<button type="submit" class="btn principal">Enregistrer</button></div></form>';
@@ -2388,12 +2584,21 @@ Formulaires.consulterRecette = function (rid) {
       'style="margin-top:.6rem;text-decoration:none">Ouvrir la recette d\'origine ↗</a>';
   }
 
-  html += '<div class="rangee-btn" style="margin-top:1.2rem">' +
+  /* Le favori se marque ici aussi : c'est en lisant la recette qu'on se dit
+     « celle-là, on la refera ». Chacun a les siens. */
+  html += '<button class="btn plein ' + (estFavori(r) ? "doux" : "") + '" data-role="favori" ' +
+    'style="margin-top:.8rem">' +
+    (estFavori(r) ? "⭐ Dans vos favoris — retirer" : "☆ Ajouter à mes favoris") + "</button>";
+
+  html += '<div class="rangee-btn" style="margin-top:.6rem">' +
     '<button class="btn" data-action="fermer">Fermer</button>' +
     '<button class="btn principal" data-role="modifier">✏️ Modifier</button></div></div>';
 
   ouvrirFeuille(r.nom, html, (f) => {
     f.querySelector('[data-role="modifier"]').onclick = () => Formulaires.recette(r.id);
+    const bf = f.querySelector('[data-role="favori"]');
+    /* On rouvre la fiche : le bouton reflète le nouvel état, sans la fermer. */
+    if (bf) bf.onclick = () => { basculerFavori(r.id); Formulaires.consulterRecette(r.id); };
   });
 };
 
@@ -2414,7 +2619,7 @@ Formulaires.publierRecette = function (rid) {
   const dejaPartagee = !!r.partageId;
 
   const html = '<div id="f-publier">' +
-    '<div class="bandeau' + (dejaPartagee ? " info" : "") + '">' + (dejaPartagee ? "🌍" : "⚠️") +
+    '<div class="bandeau' + (dejaPartagee ? " info" : "") + '">' + (dejaPartagee ? "🏘️" : "⚠️") +
     "<div>" +
     (dejaPartagee
       ? "<b>" + esc(r.nom) + "</b> est actuellement visible par toutes les familles " +
@@ -2429,9 +2634,12 @@ Formulaires.publierRecette = function (rid) {
     '<div class="ligne"><span class="etape ok">✓</span><div class="ligne-corps">' +
     "<b>Le nom de votre tribu</b><small>« " + esc(etat.famille.nom || "Une famille") +
     " » — pour dire d'où vient la recette.</small></div></div>" +
+    '<div class="ligne"><span class="etape ok">✓</span><div class="ligne-corps">' +
+    "<b>Le repère technique de votre tribu</b><small>Il ne donne aucun accès à " +
+    "votre famille ; il sert seulement à pouvoir retirer la recette plus tard.</small></div></div>" +
     '<div class="ligne"><span class="etape">✗</span><div class="ligne-corps">' +
-    "<b>Rien d'autre</b><small>Ni le repère de la famille, ni les prénoms, " +
-    "ni les points, ni les courses.</small></div></div></div>" +
+    "<b>Rien d'autre</b><small>Ni les prénoms, ni les points, ni les courses, " +
+    "ni le contenu de votre famille.</small></div></div></div>" +
 
     (dejaPartagee ? "" :
       '<p class="aide" style="margin-bottom:1rem">C\'est la version <b>enregistrée</b> qui ' +
@@ -2440,7 +2648,7 @@ Formulaires.publierRecette = function (rid) {
     '<div class="rangee-btn">' +
     '<button class="btn" data-action="fermer">Annuler</button>' +
     '<button class="btn ' + (dejaPartagee ? "danger" : "principal") + '" data-role="ok">' +
-    (dejaPartagee ? "Retirer du catalogue" : "🌍 Publier") + "</button></div></div>";
+    (dejaPartagee ? "Retirer du catalogue" : "🏘️ Publier") + "</button></div></div>";
 
   ouvrirFeuille(dejaPartagee ? "Recette partagée" : "Partager la recette", html, (f) => {
     const b = f.querySelector('[data-role="ok"]');
@@ -2449,7 +2657,7 @@ Formulaires.publierRecette = function (rid) {
       const ok = dejaPartagee ? await Partage.retirer(r.id) : await Partage.publier(r.id);
       b.disabled = false;
       if (!ok) return;                       // le message d'échec est déjà affiché
-      toast(dejaPartagee ? "Recette retirée du catalogue" : "Recette partagée 🌍");
+      toast(dejaPartagee ? "Recette retirée du catalogue" : "Recette partagée 🏘️");
       Formulaires.recette(r.id);
     };
   });
@@ -2460,7 +2668,7 @@ Formulaires.publierRecette = function (rid) {
 Formulaires.catalogue = function () {
   if (Store.mode !== "nuage") {
     ouvrirFeuille("Recettes partagées",
-      '<div class="bandeau">🌍<div>Le catalogue commun demande la connexion familiale ' +
+      '<div class="bandeau">🏘️<div>Le catalogue commun demande la connexion familiale ' +
       "(Firebase). Sur cet appareil, l'application fonctionne en local : vos recettes " +
       "restent chez vous.</div></div>" +
       '<button class="btn plein" data-action="fermer">Fermer</button>');
@@ -2517,7 +2725,7 @@ Formulaires.catalogue = function () {
 
       let h = "";
       if (!fiches.length) {
-        h += rienDu("🌍", "Le catalogue est vide pour l'instant.<br>" +
+        h += rienDu("🏘️", "Le catalogue est vide pour l'instant.<br>" +
           "Publiez une de vos recettes : ouvrez-la, <b>Modifier</b>, puis " +
           "<b>Partager avec les autres familles</b>.");
       }
@@ -2526,7 +2734,7 @@ Formulaires.catalogue = function () {
           '<span class="etiquette">' + autres.length + "</span></div>" +
           '<div class="carte">' + autres.map((x) => carte(x, false)).join("") + "</div>";
       } else if (fiches.length) {
-        h += rienDu("🌍", "Aucune autre famille n'a encore publié de recette.");
+        h += rienDu("🏘️", "Aucune autre famille n'a encore publié de recette.");
       }
       if (miennes.length) {
         h += '<div class="sous-titre"><h3>Vos publications</h3>' +
@@ -3121,6 +3329,8 @@ Formulaires.effacerAppareil = function () {
       "<p>Sur <b>cet appareil</b>, seront effacés :</p><ul>" +
       "<li>le profil avec lequel vous êtes connecté (il faudra le rechoisir et " +
       "retaper votre code à 4 chiffres) ;</li>" +
+      "<li>la copie de la famille gardée sur cet appareil pour aller vite " +
+      "(elle sera retéléchargée à la prochaine ouverture) ;</li>" +
       "<li>vos préférences : thème, dernier onglet, bandeaux masqués ;</li>" +
       "<li>l'adresse e-mail éventuellement en attente de connexion.</li></ul>" +
       "<p>Pour revenir, touchez <b>« Continuer sur cet appareil »</b> sur l'écran " +
@@ -3151,12 +3361,18 @@ Formulaires.effacerAppareil = function () {
     '<button type="submit" class="btn danger">Effacer</button></div></form>';
 
   ouvrirFeuille("Effacer les données de cet appareil", html, (f) => {
-    f.onsubmit = (ev) => {
+    f.onsubmit = async (ev) => {
       ev.preventDefault();
       if (!partage) {
         const mot = String(new FormData(ev.target).get("mot") || "").trim().toUpperCase();
         if (mot !== "EFFACER") { toast("Recopiez EFFACER pour confirmer"); return; }
       }
+      ev.target.querySelector('button[type="submit"]').disabled = true;
+      /* La copie locale de la famille (cache Firestore) part AVANT les
+         repères : c'est elle qui contient les données, pas localStorage.
+         Oubliée le 12/09/2026 en activant le cache — l'écran promettait
+         d'effacer et laissait la tribu entière dans IndexedDB. */
+      await Store.purgerCacheLocal();
       Object.keys(localStorage)
         .filter((k) => k.indexOf("tribu:") === 0 && garde.indexOf(k) === -1)
         .forEach((k) => { try { localStorage.removeItem(k); } catch (e) { } });

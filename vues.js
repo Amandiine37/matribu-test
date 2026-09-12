@@ -154,6 +154,65 @@ function carteObjectif() {
     "</div>";
 }
 
+/* La place dans le programme « Familles Fondatrices ».
+
+   Deux états, deux allures :
+   - place acquise : un badge d'une ligne, discret, qui ouvre la fiche ;
+   - place réservée : la progression, avec ce qu'il reste à faire et le temps
+     qui court — celle-là a une date de péremption, elle mérite sa carte.
+
+   Le badge d'une tribu qui en a déjà un s'affiche partout : c'est une donnée
+   vraie. La réservation, elle, ne se propose que là où le programme tourne —
+   jamais sur le site d'essai, qui partage la base de la production. */
+function carteFondatrice() {
+  const p = placeFondatrice();
+  if (!p || !p.numero) return "";
+  const pionniere = p.genre === "pionniere";
+  const nom = pionniere ? "Famille Pionnière" : "Famille Fondatrice";
+  const emoji = pionniere ? "🌱" : "🏅";
+
+  if (estFondatrice()) {
+    return '<div class="carte"><div class="ligne ligne-maj" data-action="fondatrice">' +
+      '<span style="font-size:1.5rem">' + emoji + "</span>" +
+      '<div class="ligne-corps"><b>' + nom + " " + numeroFondatrice(p.numero) + "</b>" +
+      "<small>Une des " + PROGRAMME.places + " premières tribus de Ma Tribu. " +
+      "Appuyez pour voir.</small></div></div></div>";
+  }
+
+  if (!programmeActif()) return "";
+
+  const av = avancementFondatrice();
+  const faits = [av.membres >= PROGRAMME.membres,
+    av.validees >= PROGRAMME.validees,
+    av.jours >= PROGRAMME.joursUtiles].filter(Boolean).length;
+  const ligne = (fait, titre, detail) =>
+    '<div class="ligne' + (fait ? " fait" : "") + '">' +
+    '<span class="etape' + (fait ? " ok" : "") + '">' + (fait ? "✓" : "") + "</span>" +
+    '<div class="ligne-corps"><b>' + titre + "</b>" +
+    (fait ? "" : "<small>" + detail + "</small>") + "</div></div>";
+
+  return '<div class="carte">' +
+    '<div class="carte-titre">' + emoji + " Place de " + nom +
+    '<button class="lien" data-action="fondatrice">En savoir plus</button></div>' +
+    '<p class="aide" style="margin:0 0 .7rem">Votre place ' + numeroFondatrice(p.numero) +
+    " est réservée. " +
+    (av.resteJours > 1 ? "Il reste " + av.resteJours + " jours pour la confirmer."
+      : av.resteJours === 1 ? "Dernier jour pour la confirmer."
+        : "Plus que quelques heures.") + "</p>" +
+    '<div class="barre-progression"><i style="width:' + Math.round(faits / 3 * 100) + '%"></i></div>' +
+    '<div style="margin-top:.5rem">' +
+    ligne(av.membres >= PROGRAMME.membres,
+      "Être au moins " + PROGRAMME.membres + " dans la tribu",
+      av.membres + " pour l'instant") +
+    ligne(av.validees >= PROGRAMME.validees,
+      PROGRAMME.validees + " tâches ou repas validés",
+      av.validees + " sur " + PROGRAMME.validees) +
+    ligne(av.jours >= PROGRAMME.joursUtiles,
+      "L'utiliser " + PROGRAMME.joursUtiles + " jours différents",
+      av.jours + " jour" + (av.jours > 1 ? "s" : "") + " pour l'instant") +
+    "</div></div>";
+}
+
 function bandeauMaj() {
   const maj = misesAJour();
   if (!maj.length) return "";
@@ -268,6 +327,8 @@ Vues.accueil = function () {
     }
   }
 
+  h.push(carteFondatrice());
+
   /* Mes taches.
      L'accueil est un tableau de bord, pas la liste complète. Sans limite, une
      semaine chargée repoussait le menu du soir, l'agenda et les courses à
@@ -291,7 +352,8 @@ Vues.accueil = function () {
       aValider.forEach((x) => {
         l.push('<div class="ligne">' + avatarDe(membre(x.et.parQui)) +
           '<div class="ligne-corps"><b>' + esc(x.t.emoji + " " + x.t.nom) + "</b><small>" +
-          esc(nomDe(x.et.parQui)) + " dit l'avoir faite • +" + x.t.points + " pts</small></div>" +
+          esc(nomDe(x.et.parQui)) + " dit l'avoir faite" +
+          (pointsActifs() ? " • +" + x.t.points + " pts" : "") + "</small></div>" +
           '<button class="btn mini danger" data-action="tache-refuser" data-id="' + x.t.id + '">✕</button>' +
           '<button class="btn mini principal" data-action="tache-valider" data-id="' + x.t.id + '">Valider</button>' +
           "</div>");
@@ -471,7 +533,7 @@ Vues.accueil = function () {
 
   /* Classement */
   const cl = classement();
-  if (cl.length > 1) {
+  if (pointsActifs() && cl.length > 1) {
     h.push(carteObjectif());
     /* Le bilan se propose quand la semaine se termine — samedi, dimanche et
        lundi. Le reste du temps il reste accessible depuis Points & cadeaux :
@@ -493,7 +555,7 @@ Vues.accueil = function () {
         '<div class="ligne"><span class="rang' + (i === 0 ? " or" : "") + '">' + (i + 1) + "</span>" +
         avatarDe(x.m) + '<div class="ligne-corps"><b>' + esc(x.m.prenom) + "</b></div>" +
         '<span class="etiquette or">' + x.pts + " pts</span></div>").join(""),
-      "Boutique", "aller", "points"));
+      "Récompenses", "aller", "points"));
   }
 
   return h.join("");
@@ -524,9 +586,12 @@ function ligneTache(x, compact) {
   else if (et.statut === "valide") statutHtml = '<span class="etiquette vert">✓ validée</span>';
 
   const qui = membre(x.assigne);
+  /* Sans les points, une tâche n'annonce plus un gain : juste quand elle
+     revient, et qui s'en occupe. */
+  const gain = pointsActifs() ? "+" + t.points + " pts" : "";
   const sous = compact
-    ? "+" + t.points + " pts • " + libellePeriode(t.frequence)
-    : (qui ? qui.prenom : "personne d'assigné") + " • +" + t.points + " pts";
+    ? (gain ? gain + " • " : "") + libellePeriode(t.frequence)
+    : (qui ? qui.prenom : "personne d'assigné") + (gain ? " • " + gain : "");
 
   return '<div class="ligne' + (et.statut === "valide" ? " fait" : "") + '">' +
     (compact ? "" : avatarDe(qui)) +
@@ -597,7 +662,20 @@ Vues.courses = function () {
     '<button class="' + (surStock ? "on" : "") + '" data-action="courses-onglet" data-valeur="stock">' +
     "🥫 Ma réserve" + (bas ? " · " + bas : "") + "</button></div>");
 
+  /* La réserve a désormais son propre onglet en bas : on le dit ici, une
+     fois, pour ceux qui la cherchaient dans cet écran. */
+  if (!surStock && !ongletMasque("reserve")) {
+    h.push('<p class="aide" style="margin:-.3rem 0 .8rem">🥫 Votre réserve — ce que vous gardez ' +
+      "en permanence à la maison — a aussi son onglet dans la barre du bas.</p>");
+  }
+
   return h.join("") + (surStock ? vueReserve() : vueListeCourses());
+};
+
+/* L'onglet Réserve de la barre du bas : la même vue, sans le sélecteur de
+   listes de courses. */
+Vues.reserve = function () {
+  return vueReserve();
 };
 
 /* ---------------------------- les listes de courses ---------------------------- */
@@ -658,11 +736,22 @@ function vueListeCourses() {
       "bocaux et aux sacs réutilisables.</div></div>");
   }
 
-  const parRayon = {};
-  actifs.forEach((c) => { (parRayon[c.rayon] = parRayon[c.rayon] || []).push(c); });
+  /* Une recherche, mais seulement quand la liste est longue : sur six
+     articles, un champ de plus n'aide personne. */
+  const q = pourChercher(ui.rechercheCourses || "").trim();
+  if (actifs.length > 12 || q) {
+    h.push('<input type="text" id="champ-recherche-courses" placeholder="Rechercher dans la liste…" ' +
+      'value="' + esc(ui.rechercheCourses || "") + '" autocomplete="off" style="margin-bottom:.6rem">');
+  }
+  const vus = actifs.filter((c) => !q || pourChercher(c.nom).includes(q));
+  if (q && !vus.length) {
+    h.push(rienDu("🔎", "Aucun article ne correspond à « " + esc(ui.rechercheCourses) + " »."));
+  }
 
-  const ordre = RAYONS.concat(Object.keys(parRayon).filter((r) => !RAYONS.includes(r)));
-  ordre.forEach((r) => {
+  const parRayon = {};
+  vus.forEach((c) => { (parRayon[c.rayon] = parRayon[c.rayon] || []).push(c); });
+
+  ordreRayons(Object.keys(parRayon)).forEach((r) => {
     const l = parRayon[r];
     if (!l || !l.length) return;
     h.push('<div class="sous-titre"><h3>' + esc(r) + '</h3><span class="etiquette">' + l.length + "</span></div>");
@@ -739,15 +828,56 @@ function vueReserve() {
     h.push('<div class="bandeau info">✅<div>Tout est au-dessus du minimum.</div></div>');
   }
 
-  const parRayon = {};
-  etat.stock.forEach((s) => { (parRayon[s.rayon] = parRayon[s.rayon] || []).push(s); });
-  const ordre = RAYONS.concat(Object.keys(parRayon).filter((r) => !RAYONS.includes(r)));
+  /* Une réserve bien remplie devenait un mur à faire défiler. Deux remèdes :
+     une recherche, et des rayons qui se replient — ce qui est replié est gardé
+     sur l'appareil. Pendant une recherche, tout est déplié : on cherche pour
+     trouver, pas pour re-déplier. */
+  /* Deux côtés : ce qui se mange, et le reste. On ne cherche pas la lessive
+     en pensant au dîner. Les articles encore à ranger (« À catégoriser »,
+     « Autre ») apparaissent des deux côtés, exprès. */
+  const cote = ui.coteReserve === "maison" ? "maison" : "alimentaire";
+  const compte = (c) => etat.stock.filter((s) => rayonDuCote(s.rayon, c)).length;
+  h.push('<div class="segments" style="margin-bottom:.6rem">' +
+    ["alimentaire", "maison"].map((c) =>
+      '<button class="' + (cote === c ? "on" : "") + '" data-action="reserve-cote" data-valeur="' + c + '">' +
+      (c === "alimentaire" ? "🥫 Alimentaire" : "🧴 Maison") +
+      (compte(c) ? " · " + compte(c) : "") + "</button>").join("") + "</div>");
 
-  ordre.forEach((r) => {
-    const l = parRayon[r];
-    if (!l || !l.length) return;
-    h.push('<div class="sous-titre"><h3>' + esc(r) + '</h3><span class="etiquette">' + l.length + "</span></div>");
-    h.push('<div class="carte">' + l.sort((a, b) => a.nom.localeCompare(b.nom)).map(ligneStock).join("") + "</div>");
+  const q = pourChercher(ui.rechercheStock || "").trim();
+  const vus = etat.stock.filter((s) => rayonDuCote(s.rayon, cote))
+    .filter((s) => !q || pourChercher(s.nom).includes(q));
+
+  const parRayon = {};
+  vus.forEach((s) => { (parRayon[s.rayon] = parRayon[s.rayon] || []).push(s); });
+  const remplis = ordreRayons(Object.keys(parRayon));
+  const replies = q ? [] : (ui.rayonsReplies || []);
+  const toutReplie = remplis.length > 0 && remplis.every((r) => replies.indexOf(r) !== -1);
+
+  h.push('<input type="text" id="champ-recherche-stock" placeholder="Rechercher dans la réserve…" ' +
+    'value="' + esc(ui.rechercheStock || "") + '" autocomplete="off" style="margin-bottom:.5rem">');
+  h.push('<div class="rangee-btn" style="margin:0 0 .7rem">' +
+    '<button class="btn doux" data-action="stock-replier-tout" data-valeur="' +
+    (toutReplie ? "deplier" : "replier") + '">' +
+    (toutReplie ? "▾ Tout déplier" : "▸ Tout replier") + "</button></div>");
+
+  if (q && !vus.length) {
+    h.push(rienDu("🔎", "Aucun article ne correspond à « " + esc(ui.rechercheStock) + " » de ce côté."));
+    return h.join("");
+  }
+  if (!q && !vus.length) {
+    h.push(rienDu(cote === "maison" ? "🧴" : "🥫", cote === "maison"
+      ? "Rien de ce côté pour l'instant.<br>Entretien, hygiène, maison, animaux : posez-les ci-dessus."
+      : "Rien de ce côté pour l'instant.<br>Posez ci-dessus ce que vous gardez en permanence."));
+    return h.join("");
+  }
+
+  remplis.forEach((r) => {
+    const l = parRayon[r].sort((a, b) => a.nom.localeCompare(b.nom));
+    const replie = replies.indexOf(r) !== -1;
+    h.push('<div class="sous-titre" data-action="stock-rayon" data-valeur="' + esc(r) +
+      '" style="cursor:pointer"><h3>' + (replie ? "▸ " : "▾ ") + esc(r) +
+      '</h3><span class="etiquette">' + l.length + "</span></div>");
+    if (!replie) h.push('<div class="carte">' + l.map(ligneStock).join("") + "</div>");
   });
   return h.join("");
 }
@@ -884,6 +1014,8 @@ function filtresRecettesBase() {
     ["thermomix", "🍲 Thermomix"],
     ["monde", "🌍 Du monde"],
     ["perso", "✍️ Mes recettes"],
+    ["importee", "📥 Importées"],
+    ["favori", "⭐ Mes favoris"],
     ["vege", "🌿 Végé"],
     ["rapide", "⚡ Rapide"],
     ["leger", "🥗 Léger"],
@@ -917,7 +1049,7 @@ Vues.recettes = function () {
   h.push('<div class="rangee-btn" style="margin-bottom:.7rem">' +
     '<button class="btn ' + (actifs.length ? "principal" : "doux") + '" data-action="recettes-filtres">' +
     "🔎 Filtrer" + (actifs.length ? " (" + actifs.length + ")" : "") + "</button>" +
-    '<button class="btn doux" data-action="recettes-partagees">🌍 Partagées</button></div>');
+    '<button class="btn doux" data-action="recettes-partagees">🏘️ Partagées</button></div>');
 
   if (actifs.length && !ui.filtresOuverts) {
     h.push('<div class="puces" style="margin-bottom:.7rem">' +
@@ -995,9 +1127,12 @@ Vues.recettes = function () {
       return p ? '<span class="etiquette sante" title="' + esc(p.nom) + '">' +
         p.emoji + "</span>" : "";
     }).join("") +
-    (r.partageId ? '<span class="etiquette vert">🌍 partagée</span>' : "") +
+    (r.partageId ? '<span class="etiquette vert">🏘️ partagée</span>' : "") +
     (r.origine === "importee" ? '<span class="etiquette">importée</span>' : "") +
     "</span></div>" +
+    '<button class="btn mini icone" data-action="recette-favori" data-id="' + r.id +
+    '" aria-label="' + (estFavori(r) ? "Retirer de mes favoris" : "Ajouter à mes favoris") + '">' +
+    (estFavori(r) ? "⭐" : "☆") + "</button>" +
     '<button class="btn mini icone" data-action="recette-editer" data-id="' + r.id +
     '" aria-label="Modifier">✏️</button></div>';
 
@@ -1191,7 +1326,7 @@ Vues.points = function () {
   }
 
   /* Boutique */
-  h.push('<div class="sous-titre"><h3>La boutique</h3>' +
+  h.push('<div class="sous-titre"><h3>À partager en famille</h3>' +
     (estAdmin() ? '<button class="lien" data-action="cadeau-nouveau">Ajouter</button>' : "") + "</div>");
   if (!dispo.length) {
     h.push(rienDu("🎁", estAdmin()
@@ -1246,6 +1381,8 @@ Vues.admin = function () {
     [["membres", "👨‍👩‍👧 Membres"], ["inviter", "✉️ Inviter"], ["taches", "🧹 Tâches"],
      ["cadeaux", "🎁 Cadeaux"], ["recettes", "📖 Recettes"], ["reglages", "⚙️ Réglages"],
      ["objectif", "🤝 Objectif"], ["onglets", "📱 Onglets"], ["donnees", "🔒 Données"]]
+      /* Points éteints : ces deux raccourcis mèneraient à des blocs absents. */
+      .filter(([a2]) => pointsActifs() || (a2 !== "cadeaux" && a2 !== "objectif"))
       .map(([a2, l]) => '<button class="puce" data-action="admin-aller" data-valeur="' + a2 + '">' +
         l + "</button>").join("") + "</div>");
 
@@ -1254,7 +1391,7 @@ Vues.admin = function () {
       '<div class="ligne">' + avatarDe(m) +
       '<div class="ligne-corps"><b>' + esc(m.prenom) + "</b><small>" +
       (m.sansAppareil ? "Géré par les parents" : m.role === "admin" ? "Administrateur" : "Membre") +
-      " • " + pointsDe(m.id) + " pts" +
+      (pointsActifs() ? " • " + pointsDe(m.id) + " pts" : "") +
       (!m.sansAppareil && !aUnAppareil(m) ? " • en attente d'invitation" : "") + "</small>" +
       (m.sansAppareil ? '<span class="etiquettes"><span class="etiquette">🧒 sans téléphone</span></span>' : "") +
       "</div>" +
@@ -1308,14 +1445,23 @@ Vues.admin = function () {
       : rienDu("🧹", "Aucune tâche."),
     "Ajouter", "tache-nouvelle"));
 
-  h.push(blocAncre("cadeaux", "🎁 Cadeaux (" + etat.cadeaux.length + ")",
-    etat.cadeaux.length
+  /* Renouveler la liste proposée par l'application : le bouton n'apparaît que
+     s'il y a vraiment quelque chose à changer. */
+  const majCadeaux = cadeauxAremplacer();
+  if (pointsActifs()) h.push(blocAncre("cadeaux", "🎁 Cadeaux (" + etat.cadeaux.length + ")",
+    (etat.cadeaux.length
       ? etat.cadeaux.map((c) =>
         '<div class="ligne"><span style="font-size:1.2rem">' + esc(c.emoji || "🎁") + "</span>" +
         '<div class="ligne-corps"><b>' + esc(c.nom) + "</b><small>" + c.cout + " pts" +
         (c.actif === false ? " • retiré" : "") + "</small></div>" +
         '<button class="btn mini icone" data-action="cadeau-editer" data-id="' + c.id + '">✏️</button></div>').join("")
-      : rienDu("🎁", "Aucun cadeau."),
+      : rienDu("🎁", "Aucun cadeau.")) +
+    (majCadeaux.aRetirer.length || majCadeaux.aAjouter.length
+      ? '<p class="aide" style="margin-top:.7rem">L’application propose une nouvelle liste : ' +
+        "des moments à partager en famille, plutôt que des achats.</p>" +
+        '<button class="btn plein doux" data-action="cadeaux-defaut">✨ Mettre les cadeaux à jour' +
+        (majCadeaux.aAjouter.length ? " (+" + majCadeaux.aAjouter.length + ")" : "") + "</button>"
+      : ""),
     "Ajouter", "cadeau-nouveau"));
 
   const aCompleter = etat.recettes.filter((r) => r.saisons === undefined).length;
@@ -1339,15 +1485,23 @@ Vues.admin = function () {
     '<div class="ligne-corps"><b>' + g.convives + " personne" + (g.convives > 1 ? "s" : "") +
     " à table</b><small>Les quantités des recettes sont ajustées à ce nombre.</small></div></div>" +
     '<div class="ligne"><span style="font-size:1.3rem">🌟</span>' +
-    '<div class="ligne-corps"><b>' + g.pointsRepas + " points par repas cuisiné</b><small>" +
-    (g.pointsRepas ? "Validés comme une tâche." : "La cuisine ne rapporte rien.") + "</small></div></div>" +
+    '<div class="ligne-corps"><b>Système de points ' + (pointsActifs() ? "activé" : "désactivé") +
+    "</b><small>" + (pointsActifs()
+      ? "Points, classement, cadeaux et objectif commun."
+      : "Les tâches restent, sans points ni récompenses. L’historique est conservé.") +
+    "</small></div></div>" +
+    (pointsActifs()
+      ? '<div class="ligne"><span style="font-size:1.3rem">🍽️</span>' +
+        '<div class="ligne-corps"><b>' + g.pointsRepas + " points par repas cuisiné</b><small>" +
+        (g.pointsRepas ? "Validés comme une tâche." : "La cuisine ne rapporte rien.") + "</small></div></div>"
+      : "") +
     '<div class="ligne"><span style="font-size:1.3rem">♻️</span>' +
     '<div class="ligne-corps"><b>Anti-gaspillage ' + (g.antiGaspi !== false ? "activé" : "désactivé") +
     "</b><small>Priorité aux plats qui utilisent ce qui va périmer.</small></div></div>" +
     '<button class="btn plein doux" data-action="admin-reglages" style="margin-top:.7rem">Modifier</button>'));
 
   const ob = objectifFamille();
-  h.push(blocAncre("objectif", "🤝 Objectif commun",
+  if (pointsActifs()) h.push(blocAncre("objectif", "🤝 Objectif commun",
     '<p class="aide">Le classement met chacun contre les autres ; l’objectif ' +
     "commun met toute la maison du même côté. Facultatif.</p>" +
     (ob.actif
@@ -1364,6 +1518,30 @@ Vues.admin = function () {
 
   /* Onglets visibles : toutes les familles ne se servent pas de tout. */
   const caches = ongletsMasques();
+  /* Les rayons : ceux de l'application, et ceux que la famille ajoute. */
+  const perso = rayonsPerso();
+  h.push(blocAncre("rayons", "🗂️ Rayons (" + rayonsTous().length + ")",
+    '<p class="aide">Ils rangent la réserve et la liste de courses. Chacun appartient ' +
+    "à un côté : 🥫 alimentaire ou 🧴 maison. Les deux fourre-tout 🗂️ sont des deux côtés.</p>" +
+    '<div class="puces" style="margin-top:.7rem">' +
+    ordreRayons(RAYONS).map((r) => {
+      const c = coteDuRayon(r);
+      return '<span class="puce">' + (c === "maison" ? "🧴 " : c === "neutre" ? "🗂️ " : "🥫 ") +
+        esc(r) + "</span>";
+    }).join("") + "</div>" +
+    (perso.length
+      ? '<div class="sous-titre" style="margin-top:.9rem"><h3>Vos rayons</h3>' +
+        '<span class="etiquette">' + perso.length + "</span></div>" +
+        perso.map((r) => '<div class="ligne"><span style="font-size:1.2rem">' +
+          (r.cote === "maison" ? "🧴" : "🥫") + "</span>" +
+          '<div class="ligne-corps"><b>' + esc(r.nom) + "</b><small>" +
+          (r.cote === "maison" ? "côté maison" : "côté alimentaire") + " • " +
+          etat.stock.filter((s) => s.rayon === r.nom).length + " en réserve</small></div>" +
+          '<button class="btn mini danger" data-action="rayon-suppr" data-valeur="' + esc(r.nom) +
+          '">Retirer</button></div>').join("")
+      : '<p class="aide" style="margin-top:.7rem">Vous n’avez ajouté aucun rayon.</p>'),
+    "Ajouter", "rayon-nouveau"));
+
   h.push(blocAncre("onglets", "📱 Onglets visibles",
     '<p class="aide">Ce que la famille voit dans la barre du bas. Masquer un onglet ' +
     "ne supprime rien : le contenu est simplement rangé hors de vue.</p>" +
@@ -1515,8 +1693,13 @@ const Connexion = {
       EMOJIS_MEMBRES.map((e, i) => '<button type="button" class="puce ' + (i === 0 ? "on" : "") +
         '" data-emoji="' + e + '">' + e + "</button>").join("") + "</div>" +
       '<label class="champ"><span>Votre code à 4 chiffres</span>' +
-      '<input type="tel" name="pin" inputmode="numeric" pattern="[0-9]{4}" maxlength="4" placeholder="1234" required></label>' +
-      '<p class="aide" style="margin:-.4rem 0 1rem">Il est enregistré chiffré : même vous ne pourrez plus le relire. ' +
+      champPin('pattern="[0-9]{4}" placeholder="1234" required') + "</label>" +
+      /* Dire vrai : quatre chiffres, c'est un verrou entre membres d'une meme
+         famille, pas un mot de passe — l'empreinte se retrouve en quelques
+         secondes par qui a acces aux donnees (revue du 12/09/2026). Les vrais
+         droits tiennent a l'appareil, verifies par le serveur. */
+      '<p class="aide" style="margin:-.4rem 0 1rem">C\'est un verrou de profil sur les appareils de la famille, ' +
+      "pas un mot de passe : il ne protège pas contre quelqu'un qui a accès à vos données. " +
       "Un administrateur peut le réinitialiser si besoin.</p>" +
       '<button class="btn principal plein" type="submit" style="margin-top:.4rem">Créer la famille</button>' +
       '<button class="lien" type="button" id="b-retour" style="display:block;margin:1rem auto 0">Retour</button>' +
@@ -1711,7 +1894,7 @@ const Connexion = {
       EMOJIS_MEMBRES.map((e, i) => '<button type="button" class="puce ' + (i === 0 ? "on" : "") +
         '" data-emoji="' + e + '">' + e + "</button>").join("") + "</div>" +
       '<label class="champ"><span>Votre code à 4 chiffres</span>' +
-      '<input type="tel" name="pin" inputmode="numeric" pattern="[0-9]{4}" maxlength="4" required></label>' +
+      champPin('pattern="[0-9]{4}" required') + "</label>" +
       '<button class="btn principal plein" type="submit">Rejoindre la famille</button>' +
       '<button class="lien" type="button" id="b-retour" style="display:block;margin:1rem auto 0">Retour</button>' +
       "</form>";
@@ -2104,15 +2287,30 @@ function tachesDeDepart(moiId) {
   }));
 }
 function cadeauxDeDepart() {
+  /* Des moments à vivre ensemble, pas des achats.
+     Une récompense qui s'achète transforme l'entraide en marchandage : on
+     range pour obtenir un objet. Celles-ci ne coûtent rien, se préparent à
+     plusieurs et donnent une raison d'être ensemble — c'est le but.
+     Liste revue le 12 septembre 2026, à la demande d'Amandine. */
   const base = [
+    ["Choisir la musique du trajet", "🎵", 20],
+    ["Une histoire de plus au coucher", "📖", 30],
     ["Choisir le film du soir", "🎬", 40],
-    ["Un dessert au choix", "🍦", 50],
-    ["Soirée pizza", "🍕", 80],
-    ["30 min d'écran en plus", "🎮", 60],
-    ["Sortie au parc / piscine", "🏊", 150],
-    ["Petit cadeau surprise", "🎁", 300]
+    ["Choisir le menu du dimanche", "🍽️", 40],
+    ["Soirée jeux de société", "🎲", 50],
+    ["Veillée prolongée d'une demi-heure", "🌙", 50],
+    ["Cuisiner un gâteau ensemble", "🧁", 60],
+    ["Balade en forêt ou au parc", "🌳", 60],
+    ["Partie de jeu vidéo en famille", "🎮", 60],
+    ["Atelier dessin ou bricolage", "🎨", 60],
+    ["Soirée crêpes ou pizzas maison", "🥞", 70],
+    ["Pique-nique ou goûter dehors", "🧺", 80],
+    ["Chasse au trésor à la maison", "🗺️", 100],
+    ["Nuit en campement dans le salon", "🏕️", 120]
   ];
+  /* `origine` marque ce qui vient de l'application : cela permettra plus tard
+     de renouveler la liste sans toucher aux cadeaux inventés par la famille. */
   return base.map(([nom, emoji, cout]) => ({
-    id: id(), nom: nom, emoji: emoji, cout: cout, actif: true
+    id: id(), nom: nom, emoji: emoji, cout: cout, actif: true, origine: "depart"
   }));
 }
