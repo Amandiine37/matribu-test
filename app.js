@@ -153,7 +153,7 @@ const EMOJIS_LISTES = [
   "🥩", "🧊", "🧽", "🧼", "🧴", "💊", "🎁", "🎂", "🎄", "🎒",
   "✏️", "🏕️", "🌻", "🔧", "📦", "👶", "🐾", "🐶", "🍼", "🎨"];
 
-const VERSION = "0.50 bêta";
+const VERSION = "0.51 bêta";
 
 /* ---------- Demenagement vers matribu-app.fr ----------
    L'application vit a DEUX adresses pendant la transition : l'ancienne
@@ -3989,14 +3989,18 @@ async function suivreProgrammeFondatrices(code) {
       if (!place || place.famille !== code) { await oublierPlace(); return; }
       if (place.statut === "validee") { await inscrirePlace(p.numero, place.genre, "validee"); return; }
       const av = avancementFondatrice();
-      if (place.genre === "pionniere" || av.ok) {
-        if (await Store.validerPlaceFondatrice(p.numero)) {
-          await inscrirePlace(p.numero, place.genre, "validee");
-          rendre();
-          feterFondatrice(code);
-        }
+      if ((place.genre === "pionniere" || av.ok)
+          && await Store.validerPlaceFondatrice(p.numero)) {
+        await inscrirePlace(p.numero, place.genre, "validee");
+        rendre();
+        feterFondatrice(code);
         return;
       }
+      /* Pas encore validee. Le serveur refuse toute validation dans les 24 h
+         qui suivent la reservation, sauf pour une vraie pionniere (15/09/2026) :
+         on reessaiera a la prochaine ouverture. Passe 7 jours, en revanche, la
+         place repart au pot, criteres atteints ou non — sinon une tribu absente
+         pile a ce moment-la gardait pour toujours une place figee. */
       if (av.expiree) { await Store.libererPlaceFondatrice(p.numero); await oublierPlace(); }
       return;
     }
