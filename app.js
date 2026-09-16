@@ -7019,6 +7019,17 @@ function rendre() {
     ? pluriel(maj.length, "mise à jour disponible", "mises à jour disponibles") : "Mon profil";
   $("#titre-vue").textContent = TITRES[v] ? TITRES[v][0] : "Ma Tribu";
   $("#sous-titre-vue").textContent = v === "accueil" ? etat.famille.nom : (TITRES[v] ? TITRES[v][1] : "");
+  /* L'icône « Quoi de neuf » de l'en-tête : visible partout, avec sa pastille
+     tant qu'il reste quelque chose à lire — une nouvelle version, ou une
+     saison qui vient de changer. On vérifie qu'elle existe : un téléphone
+     peut tourner avec le nouveau code et un index.html encore en cache, et
+     l'application ne doit pas s'arrêter pour si peu (16/09/2026). */
+  const bActu = $("#btn-actu");
+  if (bActu) {
+    const aLire = actuANoter() || saisonVientDeChanger();
+    bActu.innerHTML = "✨" + (aLire ? '<span class="point-maj"></span>' : "");
+    bActu.title = aLire ? "Quoi de neuf — du nouveau" : "Quoi de neuf";
+  }
   $("#btn-points").hidden = !pointsActifs();
   $("#mes-points").textContent = pointsActifs() ? pointsDe(moi.id) : "0";
 

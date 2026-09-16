@@ -778,9 +778,11 @@ place ce qu'elle peut et vous le dit.
 
 ### Quoi de neuf
 
-Tout en bas de l'accueil, une carte **« ✨ Quoi de neuf »**. Elle porte une
-pastille *nouveau* tant qu'on ne l'a pas ouverte — sur cet appareil seulement :
-ce n'est pas parce qu'une personne a lu que c'est lu pour toute la famille.
+Une **icône ✨ en haut de l'écran**, à côté des points, visible depuis
+n'importe quel onglet, et une carte **« ✨ Quoi de neuf »** tout en bas de
+l'accueil. Les deux portent une pastille *nouveau* tant qu'on n'a pas ouvert —
+sur cet appareil seulement : ce n'est pas parce qu'une personne a lu que c'est
+lu pour toute la famille.
 
 Elle contient deux choses.
 
