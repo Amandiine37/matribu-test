@@ -1022,9 +1022,7 @@ Formulaires.actu = function () {
     '<button class="btn principal" data-action="actu-saison">Voir les plats de saison</button>' +
     "</div>";
 
-  html += '<div class="sous-titre" style="margin-top:1.6rem"><h3>Les nouveautés</h3></div>' +
-    '<p class="aide" style="margin:-.3rem 0 1rem">Seulement ce qui change pour vous : ' +
-    "les corrections ne sont pas listées ici.</p>";
+  html += '<div class="sous-titre" style="margin-top:1.6rem"><h3>Les nouveautés</h3></div>';
 
   html += ACTUS.map((a, i) => '<div class="actu' + (i === 0 ? " actu-neuve" : "") + '">' +
     '<div class="actu-tete"><span class="etiquette' + (i === 0 ? " chaud" : "") + '">Version ' +
@@ -1033,9 +1031,13 @@ Formulaires.actu = function () {
     a.points.map((p) => "<li>" + p + "</li>").join("") + "</ul></div>").join("");
 
   ouvrirFeuille("✨ Quoi de neuf", html);
-  /* Lue : la pastille s'éteint, et la saison ne redira plus « bienvenue ». */
+  /* Lue : la pastille s'éteint, et la saison ne redira plus « bienvenue ».
+     Le rendu qui suit est indispensable : sans lui, la pastille de l'en-tête
+     et celle de la carte restaient allumées jusqu'au prochain changement
+     d'onglet — on avait l'impression de n'avoir rien lu (16/09/2026). */
   marquerActuLue();
   marquerSaisonVue();
+  rendre();
 };
 
 Formulaires.generateur = function () {

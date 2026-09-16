@@ -282,7 +282,9 @@ const CALENDRIER = {
    ici que les NOUVEAUTÉS. Un correctif n'intéresse que celui qui a subi le
    défaut ; l'annoncer ne ferait qu'inquiéter les autres.
    La plus récente en premier. Pour ajouter une version : une entrée de plus
-   en haut, et rien d'autre à faire — la pastille « nouveau » suit. */
+   en haut, et rien d'autre à faire — la pastille « nouveau » suit.
+   Ni correctif, ni sécurité, ni « sous le capot » : cette page ne parle que
+   de ce que la famille peut voir et utiliser. */
 const ACTUS = [
   {
     version: "0.52",
@@ -300,11 +302,9 @@ const ACTUS = [
   {
     version: "0.51",
     date: "2026-09-15",
-    titre: "Une version plus discrète",
+    titre: "Ma Tribu sur Instagram et Facebook",
     points: [
-      "Les liens vers l'<b>Instagram</b> et le <b>Facebook</b> de Ma Tribu, en bas de <i>Mon profil</i>.",
-      "Sur téléphone, l'ouverture est plus légère.",
-      "Le reste de cette version était de la sécurité et de la fiabilité : on ne vous embête pas avec ça ici."
+      "Les liens vers l'<b>Instagram</b> et le <b>Facebook</b> de Ma Tribu, en bas de <i>Mon profil</i>."
     ]
   }
 ];

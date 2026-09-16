@@ -794,8 +794,9 @@ de plats de votre cahier sont de saison, et un bouton emmène directement au
 cahier, filtre *De saison* posé.
 
 **Les nouveautés.** Ce qui change d'une version à l'autre, la plus récente en
-haut. **On n'y met pas les corrections de bugs** : un défaut réparé n'intéresse
-que celui qui l'a subi, et l'annoncer inquiéterait tous les autres pour rien.
+haut. **Rien d'autre** : ni correction de bug, ni sécurité, ni « sous le capot ».
+Un défaut réparé n'intéresse que celui qui l'a subi, et le reste n'a pas sa
+place dans une page que la famille ouvre pour le plaisir.
 
 > Pour ajouter une version : une entrée de plus en haut de la liste `ACTUS`,
 > dans `app.js`. La pastille *nouveau* et la date suivent toutes seules.
