@@ -218,11 +218,11 @@ Application pour téléphone (à installer sur l'écran d'accueil) qui rassemble
 
 **Côté coulisses**
 
-- La base est désormais **sauvegardée** sur l'ordinateur qui s'occupe de
+- La base **peut être sauvegardée** sur l'ordinateur qui s'occupe de
   l'application — Firebase ne sait le faire tout seul que sur son offre payante.
-  Ces copies ne quittent pas cet ordinateur, et seules les trois dernières sont
-  gardées : la page de confidentialité le dit, et une tribu supprimée disparaît
-  aussi des copies. Marche à suivre : `GUIDE-FIREBASE.md`, étape 12.
+  Les deux programmes sont prêts et éprouvés ; marche à suivre :
+  `GUIDE-FIREBASE.md`, étape 12. Tant que des sauvegardes ne sont pas
+  réellement faites, la page de confidentialité n'en parle pas.
 
 ## Nouveautés de la 0.51
 
