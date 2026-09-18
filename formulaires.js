@@ -74,17 +74,32 @@ Formulaires.tache = function (tid) {
     emoji: "🧹", frequence: "semaine", points: 10,
     participants: etat.membres.map((m) => m.id), rotation: true, actif: true
   };
-  const assigne = t ? membre(assigneDe(t, new Date())) : null;
+  /* Tâche « certains jours » : on parle du prochain passage, pas d'aujourd'hui. */
+  const quand = t ? prochaineOccurrence(t, new Date()) : null;
+  const assigne = t ? membre(assigneDe(t, quand)) : null;
+  const avecJours = planningActif() || cour.frequence === "jours";
+  /* Brique 3 : pour une tâche répartie, pourquoi l'appli a choisi cette personne. */
+  const raisonActuelle = t && estRepartie(t) ? raisonRepartition((passageReparti(t, quand) || {}).raison) : "";
 
   const html = "<form id=\"f-tache\">" +
     '<label class="champ"><span>Nom de la tâche</span>' +
     '<input type="text" name="nom" value="' + esc(cour.nom || "") + '" required maxlength="40" placeholder="Passer l\'aspirateur"></label>' +
     '<label class="champ"><span>Icône</span></label>' + grilleEmojis(EMOJIS_TACHES, cour.emoji) +
     '<label class="champ"><span>À refaire</span></label>' +
-    puceMultiple("freq", [
-      { val: "jour", html: "Chaque jour" },
-      { val: "semaine", html: "Chaque semaine" },
-      { val: "mois", html: "Chaque mois" }], [cour.frequence]) +
+    puceMultiple("freq", [{ val: "jour", html: "Chaque jour" }]
+      /* Mode planning : « certains jours », proposé quand le mode est coché
+         — ou pour une tâche qui l'utilise déjà. */
+      .concat(avecJours ? [{ val: "jours", html: "Certains jours" }] : [])
+      .concat([
+        { val: "semaine", html: "Chaque semaine" },
+        { val: "mois", html: "Chaque mois" }]), [cour.frequence]) +
+    (avecJours
+      ? '<div id="choix-jours"' + (cour.frequence === "jours" ? "" : " hidden") + ">" +
+        puceMultiple("jours", JOURS.map((nom, k) => ({ val: String(k + 1), html: esc(nom.slice(0, 3)) })),
+          joursDeTache(cour).map(String)) +
+        '<p class="aide" style="margin:-.6rem 0 1rem">Chaque jour coché est une tâche à part : ' +
+        "faite, validée et comptée ce jour-là. Avec « Chacun son tour », la personne change à chaque passage.</p></div>"
+      : "") +
     (pointsActifs()
       ? '<label class="champ"><span>Points gagnés</span>' +
         '<input type="number" name="points" value="' + (cour.points || 10) + '" min="0" max="500" required></label>'
@@ -94,16 +109,34 @@ Formulaires.tache = function (tid) {
       ? puceMultiple("part", etat.membres.map((m) => ({ val: m.id, html: esc(m.emoji + " " + m.prenom) })),
         cour.participants || [])
       : '<p class="aide">Ajoutez d\'abord des membres.</p>') +
-    '<label class="champ" style="display:flex;gap:.6rem;align-items:flex-start">' +
+    /* Mode planning, brique 3 : l'appli répartit elle-même, à la place du
+       tour. Pas pour une tâche « chaque mois ». */
+    (planningActif()
+      ? '<label class="champ" id="zone-repartition" style="display:flex;gap:.6rem;align-items:flex-start"' +
+        (cour.frequence === "mois" ? " hidden" : "") + ">" +
+        '<input type="checkbox" name="repartition" style="width:auto;margin-top:.2rem"' +
+        (cour.repartition === true ? " checked" : "") + ">" +
+        "<span style=\"margin:0\">⚖️ Répartir automatiquement<br><small style=\"font-weight:400\">Chaque semaine, " +
+        "l'appli confie chaque passage à la personne présente qui a le moins à faire, toutes tâches " +
+        "comprises. Un parent peut toujours changer.</small></span></label>"
+      : "") +
+    '<label class="champ" id="zone-rotation" style="display:flex;gap:.6rem;align-items:flex-start"' +
+    (estRepartie(cour) ? " hidden" : "") + ">" +
     '<input type="checkbox" name="rotation" style="width:auto;margin-top:.2rem"' + (cour.rotation !== false ? " checked" : "") + ">" +
     "<span style=\"margin:0\">Chacun son tour<br><small style=\"font-weight:400\">La personne assignée change automatiquement à chaque " +
     "période. Si décoché, c'est toujours la première personne sélectionnée.</small></span></label>" +
     '<label class="champ" style="display:flex;gap:.6rem;align-items:center">' +
     '<input type="checkbox" name="pause" style="width:auto"' + (cour.actif === false ? " checked" : "") + ">" +
     '<span style="margin:0">Mettre en pause</span></label>' +
-    (t && assigne
+    /* Brique 3 : une tâche répartie n'a pas de « suivant » : on dit qui, et pourquoi. */
+    (t && assigne && estRepartie(t)
+      ? '<div class="bandeau info">⚖️<div>Au prochain passage : <b>' + esc(assigne.prenom) + "</b>" +
+        (raisonActuelle ? " (" + esc(raisonActuelle) + ")" : "") + ".</div></div>"
+      : "") +
+    (t && assigne && !estRepartie(t)
       ? '<div class="bandeau info">👤<div>Actuellement : <b>' + esc(assigne.prenom) + "</b> " +
-      libellePeriode(t.frequence) + '. <button type="button" class="lien" data-role="tourner">Passer au suivant</button></div></div>'
+      (t.frequence === "jours" ? "au prochain passage, " + JOURS[numJour(quand) - 1] : libellePeriode(t.frequence)) +
+      '. <button type="button" class="lien" data-role="tourner">Passer au suivant</button></div></div>'
       : "") +
     boutonsFormulaire(t ? "Enregistrer" : "Créer la tâche", !!t) +
     "</form>";
@@ -112,13 +145,34 @@ Formulaires.tache = function (tid) {
     brancherEmojis(f);
     brancherMulti(f, "freq", true);
     brancherMulti(f, "part", false);
+    brancherMulti(f, "jours", false);
+    /* « Certains jours » montre les jours à cocher ; les autres les cachent.
+       addEventListener, et non onclick : brancherMulti a déjà pris onclick. */
+    const zoneJours = f.querySelector("#choix-jours");
+    const gFreq = f.querySelector('[data-role="freq"]');
+    if (zoneJours && gFreq) gFreq.addEventListener("click", () => {
+      zoneJours.hidden = valeursMulti(f, "freq")[0] !== "jours";
+    });
+    /* Brique 3 : « Répartir automatiquement » remplace « Chacun son tour » ;
+       rien à répartir pour une tâche « chaque mois ». */
+    const zoneRep = f.querySelector("#zone-repartition");
+    const zoneRot = f.querySelector("#zone-rotation");
+    const majRepartition = () => {
+      const mois = valeursMulti(f, "freq")[0] === "mois";
+      zoneRep.hidden = mois;
+      zoneRot.hidden = !mois && zoneRep.querySelector("input").checked;
+    };
+    if (zoneRep && zoneRot) {
+      zoneRep.querySelector("input").addEventListener("change", majRepartition);
+      if (gFreq) gFreq.addEventListener("click", majRepartition);
+    }
 
     const bt = f.querySelector('[data-role="tourner"]');
     if (bt) bt.onclick = () => {
       t.decalage = (t.decalage || 0) + 1;
       sauver("taches");
       fermerFeuille();
-      const n = membre(assigneDe(t, new Date()));
+      const n = membre(assigneDe(t, prochaineOccurrence(t, new Date())));
       toast(n ? "C'est au tour de " + n.prenom : "Rotation effectuée");
     };
 
@@ -139,17 +193,35 @@ Formulaires.tache = function (tid) {
       const freq = valeursMulti(f, "freq")[0] || "semaine";
       const part = valeursMulti(f, "part");
       if (!part.length) { toast("Choisissez au moins une personne"); return; }
+      const jours = freq === "jours" ? valeursMulti(f, "jours").map(Number).sort((a, b) => a - b) : [];
+      if (freq === "jours" && !jours.length) { toast("Cochez au moins un jour"); return; }
 
       if (t) {
         t.nom = String(d.get("nom")).trim();
         t.emoji = emojiChoisi(f, "🧹");
-        if (t.frequence !== freq) { t.frequence = freq; t.decalage = 0; }
+        /* Mode planning : quand la fréquence ou les jours changent, la
+           rotation repart de la première personne choisie (avant : de zéro,
+           ce qui reste le cas pour les autres fréquences). */
+        const joursAvant = JSON.stringify(joursDeTache(t));
+        const freqChange = t.frequence !== freq;
+        t.frequence = freq;
+        if (freq === "jours") t.jours = jours; else delete t.jours;
+        if (freq === "jours" && (freqChange || JSON.stringify(jours) !== joursAvant)) {
+          t.decalage = calageRotation(t, part.length);
+          t.joursDepuis = isoDate(new Date());   // la semaine ne remonte pas avant
+        } else if (freqChange) t.decalage = 0;
+        if (freq !== "jours") delete t.joursDepuis;
         /* Points éteints : le champ n'est pas affiché. On GARDE la valeur
            existante, sinon modifier une tâche la remettrait à zéro et le
            réglage ne serait plus réversible sans perte. */
         if (pointsActifs()) t.points = Number(d.get("points")) || 0;
         t.participants = part;
         t.rotation = !!d.get("rotation");
+        /* Brique 3 : la case n'existe qu'en mode planning ; sans elle, on garde. */
+        if (f.querySelector('[name="repartition"]')) {
+          if (!d.get("repartition")) { delete t.repartition; delete t.repartieDepuis; }
+          else if (t.repartition !== true) { t.repartition = true; t.repartieDepuis = isoDate(new Date()); }
+        }
         t.actif = !d.get("pause");
       } else {
         const nouvelle = {
@@ -162,8 +234,9 @@ Formulaires.tache = function (tid) {
           decalage: 0, actif: !d.get("pause"), creeLe: new Date().toISOString()
         };
         // on cale la rotation pour que la 1re personne choisie commence maintenant
-        const n = part.length;
-        nouvelle.decalage = ((-indexPeriode(freq, new Date()) % n) + n) % n;
+        if (freq === "jours") { nouvelle.jours = jours; nouvelle.joursDepuis = isoDate(new Date()); }
+        if (d.get("repartition")) { nouvelle.repartition = true; nouvelle.repartieDepuis = isoDate(new Date()); }
+        nouvelle.decalage = calageRotation(nouvelle, part.length);
         etat.taches.push(nouvelle);
       }
       fermerFeuille();
@@ -921,6 +994,13 @@ Formulaires.reglagesFamille = function () {
     "protéines, glucides et lipides par portion, estimés d'après la table Ciqual de " +
     "l'Anses. Décoché, rien ne s'affiche.</small></span></label>" +
 
+    '<label class="champ" style="display:flex;gap:.6rem;align-items:flex-start">' +
+    '<input type="checkbox" name="planning"' + (g.planning === true ? " checked" : "") +
+    ' style="width:auto;margin-top:.25rem"><span style="margin:0">Mode planning' +
+    '<br><small style="font-weight:400">Choisir les jours de chaque tâche (« les poubelles ' +
+    "le mardi et le vendredi »), et voir la semaine jour par jour dans l'onglet Tâches. " +
+    "Décoché, les tâches déjà réglées sur des jours les gardent.</small></span></label>" +
+
     boutonsFormulaire("Enregistrer", false) + "</form>";
 
   ouvrirFeuille("Réglages de la famille", html, (f) => {
@@ -934,7 +1014,8 @@ Formulaires.reglagesFamille = function () {
         points: !!d.get("points"),
         pointsRepas: Math.max(0, Math.min(200, Number(d.get("pointsRepas")) || 0)),
         antiGaspi: !!d.get("antiGaspi"),
-        macros: !!d.get("macros")
+        macros: !!d.get("macros"),
+        planning: !!d.get("planning")
       });
       fermerFeuille();
       sauver("reglages");
@@ -1767,6 +1848,194 @@ Formulaires.cadeau = function (cid) {
 
 /* ================================ MEMBRE ================================ */
 
+/* ==================== PRÉSENCE D'UN MEMBRE (mode planning, brique 2) ====================
+   Les jours où la personne est là, la garde alternée, les absences. Une tâche
+   qui tombe un jour où elle n'est pas là reste « à attribuer ». */
+Formulaires.presence = function (mid) {
+  if (!estAdmin()) return;
+  const m = membre(mid);
+  if (!m) return;
+  const p = m.presence || {};
+  const auj = new Date();
+  const bascule = (p.garde && p.garde.bascule) || 1;
+  const cetteSemaine = !p.garde || semaineDeGarde(auj, bascule) % 2 === p.garde.parite;
+  /* Les absences passées sont oubliées à l'enregistrement. */
+  const absences = (p.absences || []).filter((a) => a && a.au >= isoDate(auj))
+    .map((a) => Object.assign({}, a));
+  const joursPuces = JOURS.map((nom, k) => ({ val: String(k + 1), html: esc(nom.slice(0, 3)) }));
+  const listeAbsences = () => absences.length
+    ? absences.map((a, k) => '<div class="ligne"><div class="ligne-corps"><b>' +
+        esc(a.du === a.au ? "Le " + dateJolie(a.du) : "Du " + dateJolie(a.du) + " au " + dateJolie(a.au)) + "</b>" +
+        (a.motif ? "<small>" + esc(a.motif) + "</small>" : "") + "</div>" +
+        '<button type="button" class="btn mini icone" data-role="retirer-absence" data-i="' + k +
+        '" aria-label="Retirer cette absence">🗑️</button></div>').join("")
+    : '<p class="aide" style="margin:0">Aucune absence prévue.</p>';
+
+  const html = '<form id="f-presence">' +
+    '<p class="aide" style="margin:0 0 1rem">Une tâche qui tombe un jour où ' + esc(m.prenom) +
+    " n'est pas là reste <b>« à attribuer »</b> : un parent choisit qui s'en occupe.</p>" +
+    '<label class="champ"><span>Les jours où ' + esc(m.prenom) + " est là</span></label>" +
+    puceMultiple("jours-presence", joursPuces, (p.jours || []).map(String)) +
+    '<p class="aide" style="margin:-.6rem 0 1rem">Rien de coché : tous les jours.</p>' +
+    '<label class="champ" style="display:flex;gap:.6rem;align-items:flex-start">' +
+    '<input type="checkbox" name="garde" id="case-garde" style="width:auto;margin-top:.25rem"' +
+    (p.garde ? " checked" : "") + ">" +
+    '<span style="margin:0">Garde alternée<br><small style="font-weight:400">Une semaine sur deux ' +
+    "à la maison.</small></span></label>" +
+    '<div id="bloc-garde"' + (p.garde ? "" : " hidden") + ">" +
+    '<label class="champ"><span>À la maison</span></label>' +
+    puceMultiple("garde-semaine", [{ val: "cette", html: "Cette semaine" },
+      { val: "prochaine", html: "La semaine prochaine" }], [cetteSemaine ? "cette" : "prochaine"]) +
+    '<label class="champ"><span>Change de maison le</span></label>' +
+    puceMultiple("garde-bascule", joursPuces, [String(bascule)]) +
+    "</div>" +
+    '<label class="champ"><span>Absences</span></label>' +
+    '<div class="carte" id="liste-absences" style="margin-bottom:.6rem">' + listeAbsences() + "</div>" +
+    '<div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:.5rem">' +
+    '<label class="champ"><span>Du</span><input type="date" name="du"></label>' +
+    '<label class="champ"><span>Au</span><input type="date" name="au"></label></div>' +
+    '<label class="champ"><span>Motif (facultatif)</span>' +
+    '<input type="text" name="motif" maxlength="40" placeholder="Colonie, stage, grands-parents…"></label>' +
+    '<button type="button" class="btn plein doux" data-role="ajouter-absence" style="margin-bottom:1rem">＋ Ajouter cette absence</button>' +
+    boutonsFormulaire("Enregistrer", false) + "</form>";
+
+  ouvrirFeuille("Présence de " + m.prenom, html, (f) => {
+    brancherMulti(f, "jours-presence", false);
+    brancherMulti(f, "garde-semaine", true);
+    brancherMulti(f, "garde-bascule", true);
+    const caseGarde = f.querySelector("#case-garde");
+    caseGarde.onchange = () => { f.querySelector("#bloc-garde").hidden = !caseGarde.checked; };
+    const zone = f.querySelector("#liste-absences");
+    zone.addEventListener("click", (ev) => {
+      const b = ev.target.closest('[data-role="retirer-absence"]');
+      if (!b) return;
+      absences.splice(Number(b.dataset.i), 1);
+      zone.innerHTML = listeAbsences();
+    });
+    const champ = (n) => f.querySelector('[name="' + n + '"]');
+    /* Une absence saisie mais pas encore ajoutée compte aussi à
+       l'enregistrement : on ne perd pas ce qui est tapé. */
+    const ajouter = (silencieux) => {
+      let du = champ("du").value, au = champ("au").value;
+      if (!du && !au) { if (!silencieux) toast("Choisissez au moins une date"); return false; }
+      if (!du) du = au;
+      if (!au) au = du;
+      if (au < du) { const x = du; du = au; au = x; }
+      const motif = String(champ("motif").value || "").trim();
+      absences.push(motif ? { du: du, au: au, motif: motif } : { du: du, au: au });
+      absences.sort((a, b) => a.du.localeCompare(b.du));
+      champ("du").value = ""; champ("au").value = ""; champ("motif").value = "";
+      zone.innerHTML = listeAbsences();
+      return true;
+    };
+    f.querySelector('[data-role="ajouter-absence"]').onclick = () => ajouter(false);
+    f.onsubmit = (ev) => {
+      ev.preventDefault();
+      ajouter(true);
+      const jours = valeursMulti(f, "jours-presence").map(Number).sort((a, b) => a - b);
+      const presence = {};
+      if (jours.length && jours.length < 7) presence.jours = jours;
+      if (caseGarde.checked) {
+        const b = Number(valeursMulti(f, "garde-bascule")[0]) || 1;
+        const cette = (valeursMulti(f, "garde-semaine")[0] || "cette") === "cette";
+        presence.garde = { parite: (semaineDeGarde(new Date(), b) + (cette ? 0 : 1)) % 2, bascule: b };
+      }
+      if (absences.length) presence.absences = absences;
+      if (Object.keys(presence).length) m.presence = presence; else delete m.presence;
+      fermerFeuille();
+      sauver("membres");
+      rendre();
+      toast("Présence de " + m.prenom + " enregistrée");
+    };
+  });
+};
+
+/* ==================== QUI S'EN OCCUPE ? (mode planning, brique 2) ====================
+   Un passage « à attribuer » : la personne du tour n'est pas là. Un parent
+   choisit parmi ceux qui sont là — toute la famille, pas seulement les
+   participants, lui compris. Le choix est rangé dans la tâche
+   (t.attributions), écrite par les seuls administrateurs. */
+Formulaires.attribuer = function (tid, iso) {
+  if (!estAdmin()) return;
+  const t = etat.taches.find((x) => x.id === tid);
+  if (!t) return;
+  const d = iso ? deIso(iso) : new Date();
+  const cle = clePeriode(t.frequence, d);
+  const absent = absentDuTour(t, d);
+  const deja = attributionDe(t, d);
+  const actuel = assigneDe(t, d);
+  const rep = passageReparti(t, d);
+  const duJour = t.frequence === "jour" || t.frequence === "jours";
+  const quand = duJour ? JOURS[numJour(d) - 1] + " " + d.getDate() : libellePeriode(t.frequence);
+  /* Brique 3 : la même feuille change n'importe quel passage à venir. On dit
+     d'abord où il en est : à attribuer, choisi par un parent, réparti par
+     l'appli, ou simplement le tour de quelqu'un. */
+  const situation = deja ? "confié à " + nomDe(deja) + " par un parent"
+    : absent ? pasLa(absent)
+    : rep && rep.qui ? "l'appli a choisi " + nomDe(rep.qui) + " (" + raisonRepartition(rep.raison) + ")"
+    : actuel ? "c'est le tour de " + nomDe(actuel)
+    : "personne d'assigné";
+  /* Les autres passages de la même tâche, encore à attribuer cette semaine. */
+  const autres = absent
+    ? passagesAAttribuer().filter((x) => x.t.id === t.id && clePeriode(t.frequence, x.d) !== cle) : [];
+  const parts = participantsValides(t);
+  const ordre = etat.membres.slice().sort((a, b) =>
+    (parts.indexOf(b.id) !== -1) - (parts.indexOf(a.id) !== -1));
+  const choix = ordre.map((m) => {
+    const la = presentPendant(m.id, t, d);
+    /* Grisée comme un .btn:disabled de la feuille de style (les puces n'en ont pas). */
+    return '<button type="button" class="puce' + (m.id === actuel ? " on" : "") + '" data-membre="' + esc(m.id) + '"' +
+      (la ? "" : ' disabled style="opacity:.42;pointer-events:none"') + ">" +
+      esc((m.emoji || "🙂") + " " + m.prenom) + (la ? "" : " · pas là") + "</button>";
+  }).join("");
+
+  const html = '<p class="aide" style="margin:0 0 .8rem"><b>' + esc((t.emoji || "🧹") + " " + t.nom) +
+    "</b> — " + esc(quand) + " : " + esc(situation) + ". Qui s'en occupe ?</p>" +
+    '<div class="puces" id="choix-membre" style="margin-bottom:1rem">' + choix + "</div>" +
+    (autres.length
+      ? '<label class="champ" style="display:flex;gap:.6rem;align-items:flex-start">' +
+        '<input type="checkbox" id="case-autres" style="width:auto;margin-top:.2rem" checked>' +
+        '<span style="margin:0">Aussi pour ' + (autres.length === 1 ? "l'autre passage"
+          : "les " + autres.length + " autres passages") + " à attribuer cette semaine</span></label>"
+      : "") +
+    /* Un choix de parent se défait : l'appli (ou le tour) reprend la main. */
+    (deja
+      ? '<button type="button" class="btn plein doux" data-role="rendre" style="margin-bottom:.6rem">↺ ' +
+        (estRepartie(t) ? "Laisser l'appli choisir" : "Revenir au tour normal") + "</button>"
+      : "") +
+    '<button type="button" class="btn plein" data-action="fermer">Annuler</button>';
+
+  ouvrirFeuille("Qui s'en occupe ?", html, (f) => {
+    f.querySelector("#choix-membre").onclick = (ev) => {
+      const b = ev.target.closest("[data-membre]");
+      if (!b || b.disabled) return;
+      const mid = b.dataset.membre;
+      t.attributions = elaguerAttributions(t.attributions);
+      t.attributions[cle] = mid;
+      const caseAutres = f.querySelector("#case-autres");
+      let n = 1;
+      if (caseAutres && caseAutres.checked) {
+        autres.forEach((x) => {
+          if (presentPendant(mid, t, x.d)) { t.attributions[clePeriode(t.frequence, x.d)] = mid; n++; }
+        });
+      }
+      fermerFeuille();
+      sauver("taches");
+      toast("Confié à " + nomDe(mid) + (n > 1 ? " (" + n + " passages)" : ""));
+    };
+    const br = f.querySelector('[data-role="rendre"]');
+    if (br) br.onclick = () => {
+      t.attributions = elaguerAttributions(t.attributions);
+      delete t.attributions[cle];
+      fermerFeuille();
+      sauver("taches");
+      const n = assigneDe(t, d);
+      toast(!n ? "Le passage est de nouveau à attribuer"
+        : estRepartie(t) ? "L'appli a choisi " + nomDe(n) : "C'est le tour de " + nomDe(n));
+    };
+  });
+};
+
 Formulaires.membre = async function (mid) {
   if (!estAdmin()) return;
   /* Le compte adulte (adresse e-mail) ne vit pas sur le membre mais a part,
@@ -1837,6 +2106,11 @@ Formulaires.membre = async function (mid) {
         esc(m.id) + '" style="margin:.4rem 0 .2rem">' +
         "📋 Appareils de " + esc(m.prenom) + " (" + appareilsDe(m.id).length + ")</button>"
       : "") +
+    /* Mode planning, brique 2 : jours de présence, garde alternée, absences. */
+    (m && planningActif()
+      ? '<button type="button" class="btn plein doux" data-role="presence" style="margin:.4rem 0 .2rem">' +
+        "🏠 Présence de " + esc(m.prenom) + (resumePresence(m) ? " · " + esc(resumePresence(m)) : "") + "</button>"
+      : "") +
     boutonsFormulaire(m ? "Enregistrer" : "Ajouter", !!m && etat.membres.length > 1) + "</form>";
 
   ouvrirFeuille(m ? "Modifier " + m.prenom : "Nouveau membre", html, (f) => {
@@ -1847,6 +2121,8 @@ Formulaires.membre = async function (mid) {
 
     const bAppareils = f.querySelector('[data-role="appareils"]');
     if (bAppareils) bAppareils.onclick = () => Formulaires.appareils(m.id);
+    const bPresence = f.querySelector('[data-role="presence"]');
+    if (bPresence) bPresence.onclick = () => Formulaires.presence(m.id);
 
     /* Un profil sans téléphone n'a besoin ni de rôle ni de code. */
     const caseSans = f.querySelector("#case-sans-appareil");

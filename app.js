@@ -93,7 +93,7 @@ function estAbsence(c) { return !!(c && c.absent); }
 
 /* Réglages de la famille et leurs valeurs par défaut. Déclarés ici, avec les
    autres constantes : `etatVide()` s'en sert dès le chargement du fichier. */
-const REGLAGES_DEFAUT = { convives: 4, points: true, pointsRepas: 15, antiGaspi: true, macros: false };
+const REGLAGES_DEFAUT = { convives: 4, points: true, pointsRepas: 15, antiGaspi: true, macros: false, planning: false };
 
 /* Les palettes de couleurs (styles.css). Choisies PAR APPAREIL, comme le mode
    clair/sombre : chacun la sienne, sans droits particuliers — un réglage rangé
@@ -153,7 +153,7 @@ const EMOJIS_LISTES = [
   "🥩", "🧊", "🧽", "🧼", "🧴", "💊", "🎁", "🎂", "🎄", "🎒",
   "✏️", "🏕️", "🌻", "🔧", "📦", "👶", "🐾", "🐶", "🍼", "🎨"];
 
-const VERSION = "0.53 bêta";
+const VERSION = "0.56 bêta";
 
 /* ---------- Demenagement vers matribu-app.fr ----------
    L'application vit a DEUX adresses pendant la transition : l'ancienne
@@ -286,6 +286,34 @@ const CALENDRIER = {
    Ni correctif, ni sécurité, ni « sous le capot » : cette page ne parle que
    de ce que la famille peut voir et utiliser. */
 const ACTUS = [
+  {
+    version: "0.56",
+    date: "2026-09-18",
+    titre: "La répartition automatique",
+    points: [
+      "En mode planning, une tâche peut être <b>répartie automatiquement</b> : chaque semaine, MaTribu confie chaque passage à la personne présente qui a <b>le moins à faire</b>, toutes tâches comprises, sans empiler plusieurs tâches le même jour.",
+      "Chaque choix dit <b>pourquoi</b> (« le moins à faire cette semaine », « pour varier »…). Un parent le change d'un geste en touchant le prénom dans « 📅 La semaine ».",
+      "Une tâche de la semaine reçoit un <b>jour conseillé</b> : le moins chargé pour la personne."
+    ]
+  },
+  {
+    version: "0.55",
+    date: "2026-09-18",
+    titre: "Qui est là, et quand",
+    points: [
+      "En mode planning, notez dans la fiche de chacun <b>ses jours de présence</b>, la <b>garde alternée</b> et les <b>absences</b> (colonie, stage…).",
+      "Une tâche qui tombe un jour où la personne n'est pas là reste <b>« à attribuer »</b> : sur l'accueil, un parent choisit qui s'en occupe — pour ce jour-là ou pour toute la semaine."
+    ]
+  },
+  {
+    version: "0.54",
+    date: "2026-09-18",
+    titre: "Le mode planning",
+    points: [
+      "Nouvelle option : choisissez <b>les jours de chaque tâche</b> — « les poubelles le mardi et le vendredi » — et voyez <b>la semaine jour par jour</b> dans l'onglet Tâches.",
+      "Avec « Chacun son tour », la personne change à chaque passage. Un administrateur active le mode dans <i>Administration › Réglages de la famille</i>."
+    ]
+  },
   {
     version: "0.53",
     date: "2026-09-18",
@@ -594,13 +622,13 @@ function lundiDeCle(cle) {
   return pj;
 }
 function indexPeriode(freq, d) {
-  if (freq === "jour") return Math.floor(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()) / 86400000);
+  if (freq === "jour" || freq === "jours") return Math.floor(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()) / 86400000);
   if (freq === "mois") return d.getFullYear() * 12 + d.getMonth();
   const l = lundiDe(d);
   return Math.floor(Date.UTC(l.getFullYear(), l.getMonth(), l.getDate()) / 86400000 / 7);
 }
 function clePeriode(freq, d) {
-  if (freq === "jour") return isoDate(d);
+  if (freq === "jour" || freq === "jours") return isoDate(d);
   if (freq === "mois") return d.getFullYear() + "-" + pad(d.getMonth() + 1);
   return cleSemaine(d);
 }
@@ -608,13 +636,13 @@ function clePeriode(freq, d) {
    n'a pas deja ete payee dans cette periode, meme si sa frequence a change
    entre-temps. */
 function debutDePeriode(freq, d) {
-  if (freq === "jour") return new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  if (freq === "jour" || freq === "jours") return new Date(d.getFullYear(), d.getMonth(), d.getDate());
   if (freq === "mois") return new Date(d.getFullYear(), d.getMonth(), 1);
   const l = lundiDe(d);
   return new Date(l.getFullYear(), l.getMonth(), l.getDate());
 }
 function libellePeriode(freq) {
-  if (freq === "jour") return "aujourd'hui";
+  if (freq === "jour" || freq === "jours") return "aujourd'hui";
   if (freq === "mois") return "ce mois-ci";
   return "cette semaine";
 }
@@ -1499,16 +1527,355 @@ function recalculerIndexSur(d) {
 function recalculerIndex() { return recalculerIndexSur(etat); }
 
 /* --- Taches --- */
+
+/* MODE PLANNING (18/09/2026). Une tâche « certains jours » (frequence
+   "jours") porte ses jours de la semaine dans t.jours : 1 = lundi … 7 =
+   dimanche. Chaque jour coché est un passage à part, suivi au jour près
+   comme une tâche quotidienne. */
+function numJour(d) { return ((d.getDay() + 6) % 7) + 1; }            // lundi = 1
+function joursDeTache(t) {
+  return ((t && t.jours) || []).map(Number).filter((n) => n >= 1 && n <= 7)
+    .sort((a, b) => a - b).filter((n, k, l) => l.indexOf(n) === k);
+}
+/* La tâche tombe-t-elle ce jour-là ? Toujours vrai pour les autres fréquences. */
+function prevueLe(t, d) {
+  return !t || t.frequence !== "jours" || joursDeTache(t).indexOf(numJour(d)) !== -1;
+}
+/* Le prochain jour où elle tombe, à partir de d (d compris). */
+function prochaineOccurrence(t, d) {
+  for (let k = 0; k < 7; k++) {
+    const x = new Date(d.getFullYear(), d.getMonth(), d.getDate() + k);
+    if (prevueLe(t, x)) return x;
+  }
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate());
+}
+/* La base de « chacun son tour » : la période pour une tâche ordinaire, le
+   PASSAGE pour une tâche « certains jours » — mardi Léo, vendredi Emma,
+   mardi suivant de nouveau le suivant de la liste. Même calcul sur tous
+   les téléphones : rien à enregistrer. */
+function indexRotation(t, d) {
+  if (t.frequence !== "jours") return indexPeriode(t.frequence, d);
+  const j = joursDeTache(t);
+  const rang = Math.max(0, j.indexOf(numJour(d)));
+  return indexPeriode("semaine", d) * (j.length || 1) + rang;
+}
+/* Le décalage qui fait commencer la PREMIÈRE personne choisie au prochain
+   passage (aujourd'hui pour une tâche ordinaire, comme avant). */
+function calageRotation(t, n) {
+  if (!n) return 0;
+  return ((-indexRotation(t, prochaineOccurrence(t, new Date())) % n) + n) % n;
+}
+
 function participantsValides(t) {
   return (t.participants || []).filter((x) => membre(x));
 }
-function assigneDe(t, d) {
+/* La personne que désigne « chacun son tour », sans regarder les absences. */
+function tourDe(t, d) {
   const p = participantsValides(t);
   if (!p.length) return null;
   if (t.rotation === false) return p[0];
   const n = p.length;
-  const i = (((indexPeriode(t.frequence, d) + (t.decalage || 0)) % n) + n) % n;
+  const i = (((indexRotation(t, d) + (t.decalage || 0)) % n) + n) % n;
   return p[i];
+}
+/* Qui s'occupe de ce passage : le choix d'un parent s'il y en a un, sinon le
+   tour — sauf si la personne du tour n'est pas là (mode planning) : alors
+   personne, la tâche est « à attribuer » (choix d'Amandine, 18/09/2026). */
+function assigneDe(t, d) {
+  if (!participantsValides(t).length) return null;
+  const choix = attributionDe(t, d);
+  if (choix) return choix;
+  /* Brique 3 : une tâche répartie suit le planning de la semaine. */
+  if (repartieLe(t, d)) { const p = passageReparti(t, d); return p ? p.qui : null; }
+  const qui = tourDe(t, d);
+  return qui && presentPendant(qui, t, d) ? qui : null;
+}
+
+/* QUI EST LÀ, ET QUAND (mode planning, brique 2, 18/09/2026).
+   m.presence, noté par un administrateur (Formulaires.presence) :
+     jours      jours habituels où la personne est là (absent : tous les jours)
+     garde      { parite, bascule } : garde alternée — présente une semaine sur
+                deux, la « semaine » commençant le jour de bascule (le vendredi
+                pour un enfant qui change de maison le vendredi)
+     absences   [{ du, au, motif }], dates comprises
+   Ne compte qu'en mode planning : décoché, tout le monde est là. */
+function semaineDeGarde(d, bascule) {
+  const b = Number(bascule) >= 1 && Number(bascule) <= 7 ? Number(bascule) : 1;
+  return indexPeriode("semaine", new Date(d.getFullYear(), d.getMonth(), d.getDate() - (b - 1)));
+}
+function estPresent(mid, d) {
+  if (!planningActif()) return true;
+  const m = membre(mid);
+  const p = m && m.presence;
+  if (!p) return true;
+  const iso = isoDate(d);
+  if ((p.absences || []).some((a) => a && a.du && a.au && a.du <= iso && iso <= a.au)) return false;
+  if (p.garde && (p.garde.parite === 0 || p.garde.parite === 1) &&
+      semaineDeGarde(d, p.garde.bascule) % 2 !== p.garde.parite) return false;
+  const j = (p.jours || []).map(Number);
+  return !j.length || j.indexOf(numJour(d)) !== -1;
+}
+/* Présente pendant la période de la tâche : ce jour-là pour une tâche du jour
+   (ou « certains jours ») ; au moins un jour de la semaine ou du mois sinon. */
+function presentPendant(mid, t, d) {
+  if (!planningActif()) return true;
+  if (t.frequence === "jour" || t.frequence === "jours") return estPresent(mid, d);
+  const debut = debutDePeriode(t.frequence, d);
+  const fin = t.frequence === "mois"
+    ? new Date(debut.getFullYear(), debut.getMonth() + 1, 0)
+    : new Date(debut.getFullYear(), debut.getMonth(), debut.getDate() + 6);
+  for (let x = debut; x <= fin; x = new Date(x.getFullYear(), x.getMonth(), x.getDate() + 1)) {
+    if (estPresent(mid, x)) return true;
+  }
+  return false;
+}
+/* Le choix d'un parent pour ce passage (Formulaires.attribuer). */
+function attributionDe(t, d) {
+  const c = t.attributions && t.attributions[clePeriode(t.frequence, d)];
+  return c && membre(c) ? c : null;
+}
+/* « À attribuer » : la personne du tour n'est pas là et aucun parent n'a
+   encore choisi. Renvoie l'absent, sinon null. Pour une tâche répartie
+   (brique 3), il n'y a pas de tour : PERSONNE_LA quand aucun participant
+   n'est là. */
+function absentDuTour(t, d) {
+  if (!participantsValides(t).length || attributionDe(t, d)) return null;
+  if (repartieLe(t, d)) { const p = passageReparti(t, d); return p && !p.qui ? PERSONNE_LA : null; }
+  const qui = tourDe(t, d);
+  return qui && !presentPendant(qui, t, d) ? qui : null;
+}
+/* Les passages à attribuer, d'aujourd'hui à dimanche pour les tâches du jour
+   et « certains jours », la période en cours pour les autres. */
+function passagesAAttribuer() {
+  if (!planningActif()) return [];
+  const auj = new Date();
+  const lundi = lundiDe(auj);
+  const res = [];
+  etat.taches.filter((t) => t.actif !== false).forEach((t) => {
+    if (t.frequence === "jour" || t.frequence === "jours") {
+      for (let k = 0; k < 7; k++) {
+        const d = new Date(lundi.getFullYear(), lundi.getMonth(), lundi.getDate() + k);
+        if (isoDate(d) < isoDate(auj) || !prevueLe(t, d)) continue;
+        const absent = absentDuTour(t, d);
+        if (absent) res.push({ t: t, d: d, absent: absent });
+      }
+    } else {
+      const absent = absentDuTour(t, auj);
+      if (absent) res.push({ t: t, d: auj, absent: absent });
+    }
+  });
+  return res;
+}
+/* Les choix des parents ne s'accumulent pas sans fin : on oublie les jours de
+   plus de deux mois (les clés de semaine et de mois restent, elles sont rares). */
+function elaguerAttributions(a) {
+  const limite = isoDate(new Date(Date.now() - 60 * 86400000));
+  const res = {};
+  Object.keys(a || {}).forEach((k) => { if (k.length !== 10 || k >= limite) res[k] = a[k]; });
+  return res;
+}
+/* RÉPARTITION AUTOMATIQUE (mode planning, brique 3, 18/09/2026).
+   Une tâche « Répartir automatiquement » (t.repartition) n'a pas de tour :
+   chaque semaine, l'appli confie chacun de ses passages à une personne
+   présente. Entre plusieurs, elle prend, dans cet ordre :
+     1. celle qui a le moins de tâches CE JOUR-LÀ (rien d'empilé) ;
+     2. celle qui a le moins à faire DANS LA SEMAINE, toutes tâches comprises
+        (en points, ou en nombre de tâches quand les points sont éteints) ;
+     3. celle qui a eu le moins souvent CETTE tâche dans la semaine ;
+     4. celle qui a gagné le moins de points les 4 semaines d'avant ;
+     5. à égalité parfaite, un ordre qui change chaque semaine.
+   Les tâches « chaque semaine » sont réparties d'abord (les plus lourdes en
+   tête), puis les autres jour après jour ; un même jour, deux tâches de même
+   poids s'échangent ensuite pour varier. Le calcul ne lit que ce que tous
+   les téléphones partagent (tâches, présences, choix des parents, points des
+   semaines PASSÉES), et jamais qui a coché « Fait » : même planning partout,
+   et il ne bouge pas quand les tâches se font. Les tâches « chaque mois »
+   gardent le tour. */
+const PERSONNE_LA = "*personne";      // à attribuer : aucun participant n'est là
+const RAISONS_REPARTITION = {         // [en toutes lettres, en bref]
+  parent: ["choix d'un parent", "choix d'un parent"],
+  seul: ["la seule personne là", "seule personne là"],
+  jour: ["le moins de tâches ce jour-là", "moins de tâches ce jour-là"],
+  charge: ["le moins à faire cette semaine", "moins à faire"],
+  varier: ["pour ne pas refaire la même tâche", "pour varier"],
+  passe: ["le moins de points ces 4 dernières semaines", "moins de points avant"],
+  tour: ["à égalité : son tour", "son tour"]
+};
+function raisonRepartition(code, court) {
+  const r = RAISONS_REPARTITION[code];
+  return r ? r[court ? 1 : 0] : "";
+}
+function estRepartie(t) {
+  return !!t && t.repartition === true && t.frequence !== "mois" && planningActif();
+}
+/* Répartie CE JOUR-LÀ : depuis le jour où la case a été cochée
+   (t.repartieDepuis). Les jours d'avant gardent le tour qu'ils avaient :
+   cocher la case un mercredi ne réécrit pas lundi et mardi. Une tâche
+   « chaque semaine » est répartie dès la semaine où la case est cochée. */
+function repartieLe(t, d) {
+  return estRepartie(t) &&
+    (t.frequence === "semaine" || !t.repartieDepuis || isoDate(d) >= t.repartieDepuis);
+}
+function poidsTache(t) {
+  return pointsActifs() ? Math.max(1, Number(t.points) || 0) : 1;
+}
+/* Les points gagnés (tâches et repas) les 4 semaines avant ce lundi. Une
+   ligne écrite cette semaine est datée d'après lundi : elle ne change rien
+   au planning en cours. */
+function pointsDesSemainesPassees(lundi) {
+  const fin = lundi.getTime(), debut = fin - 28 * 86400000;
+  const res = {};
+  (etat.journal || []).forEach((e) => {
+    if (!e || !(e.delta > 0) || (e.type !== "tache" && e.type !== "repas") || !e.date) return;
+    const q = new Date(e.date).getTime();
+    if (q >= debut && q < fin) res[e.membreId] = (res[e.membreId] || 0) + e.delta;
+  });
+  return res;
+}
+function calculerPlanning(lundi) {
+  const jours = [0, 1, 2, 3, 4, 5, 6].map((k) =>
+    new Date(lundi.getFullYear(), lundi.getMonth(), lundi.getDate() + k));
+  const charge = {}, parJour = {}, passages = {}, hebdo = [], parJours = [[], [], [], [], [], [], []];
+  let fois = {};
+  const noter = (t, qui, k) => {
+    charge[qui] = (charge[qui] || 0) + poidsTache(t);
+    if (k !== null) (parJour[qui] = parJour[qui] || [0, 0, 0, 0, 0, 0, 0])[k]++;
+    fois[t.id + "|" + qui] = (fois[t.id + "|" + qui] || 0) + 1;
+  };
+  const rang = (t) => etat.taches.indexOf(t);
+
+  /* 1. Ce qui est déjà décidé compte d'abord dans la charge : le tour des
+     autres tâches, les choix des parents, les passages où une seule
+     personne est là. */
+  etat.taches.forEach((t) => {
+    if (t.actif === false || t.frequence === "mois" || !participantsValides(t).length) return;
+    const depuis = t.joursDepuis || String(t.creeLe || "").slice(0, 10);
+    const periodes = t.frequence === "semaine" ? [null]
+      : [0, 1, 2, 3, 4, 5, 6].filter((k) => prevueLe(t, jours[k]) && isoDate(jours[k]) >= depuis);
+    periodes.forEach((k) => {
+      const d = k === null ? lundi : jours[k];
+      if (!repartieLe(t, d)) { const qui = assigneDe(t, d); if (qui) noter(t, qui, k); return; }
+      const cle = t.id + "|" + clePeriode(t.frequence, d);
+      const choix = attributionDe(t, d);
+      const la = choix ? [choix] : participantsValides(t).filter((mid) => presentPendant(mid, t, d));
+      if (!la.length) { passages[cle] = { qui: null, raison: "", k: k }; return; }
+      if (la.length > 1) { (k === null ? hebdo : parJours[k]).push({ t: t, k: k, cle: cle, la: la }); return; }
+      noter(t, la[0], k);
+      passages[cle] = { qui: la[0], raison: choix ? "parent" : "seul", k: k };
+    });
+  });
+
+  /* 2. Le choix d'une personne pour un passage, selon les critères du haut. */
+  const avant = pointsActifs() ? pointsDesSemainesPassees(lundi) : {};
+  const semaine = indexPeriode("semaine", lundi);
+  const ordre = (a, b) => a.la.length - b.la.length || poidsTache(b.t) - poidsTache(a.t) || rang(a.t) - rang(b.t);
+  const choisir = (x) => {
+    const p = participantsValides(x.t);
+    const decalage = (semaine + rang(x.t)) % p.length;
+    const criteres = [
+      ["jour", (m) => (x.k === null ? 0 : (parJour[m] || [])[x.k] || 0)],
+      ["charge", (m) => charge[m] || 0],
+      ["varier", (m) => fois[x.t.id + "|" + m] || 0],
+      ["passe", (m) => avant[m] || 0],
+      ["tour", (m) => (p.indexOf(m) - decalage + p.length) % p.length]
+    ];
+    /* Le premier critère qui départage deux personnes, et dans quel sens. */
+    const ecart = (a, b) => {
+      for (const c of criteres) { const e = c[1](a) - c[1](b); if (e) return [e, c[0]]; }
+      return [0, "tour"];
+    };
+    const tries = x.la.slice().sort((a, b) => ecart(a, b)[0]);
+    x.qui = tries[0];
+    /* Pourquoi elle plutôt que la suivante : dit AVANT de compter le passage. */
+    x.raison = ecart(tries[0], tries[1])[1];
+    noter(x.t, x.qui, x.k);
+  };
+  /* Pour varier : toutes les façons de redistribuer un petit lot de tâches
+     (5 au plus) entre les mêmes personnes ; on garde celle qui répète le
+     moins les mêmes tâches, puis celle qui change le moins de choses. */
+  const varier = (lot, foisAvant) => {
+    if (lot.length < 2 || lot.length > 5) return;
+    const gens = lot.map((x) => x.qui);
+    let meilleur = null;
+    const essayer = (perm, reste) => {
+      if (!reste.length) {
+        const cout = perm.reduce((s, j, i) => s + (foisAvant[lot[i].t.id + "|" + gens[j]] || 0), 0);
+        const changes = perm.reduce((s, j, i) => s + (gens[j] !== gens[i] ? 1 : 0), 0);
+        if (!meilleur || cout < meilleur.cout || (cout === meilleur.cout && changes < meilleur.changes)) {
+          meilleur = { perm: perm, cout: cout, changes: changes };
+        }
+        return;
+      }
+      reste.forEach((j, r) => essayer(perm.concat([j]), reste.slice(0, r).concat(reste.slice(r + 1))));
+    };
+    essayer([], gens.map((m, j) => j));
+    lot.forEach((x, i) => {
+      const m = gens[meilleur.perm[i]];
+      if (m !== gens[i]) { x.qui = m; x.raison = "varier"; }
+    });
+  };
+
+  /* 3. Les tâches « chaque semaine » d'abord, les plus lourdes en tête. */
+  hebdo.sort(ordre).forEach(choisir);
+
+  /* 4. Puis jour après jour. Un même jour, entre tâches de même poids et
+     mêmes personnes possibles, on échange ensuite pour varier : chacun prend
+     celle qu'il a eue le moins souvent — la charge de chacun ne bouge pas. */
+  parJours.forEach((liste) => {
+    const foisAvant = Object.assign({}, fois);
+    liste.sort(ordre).forEach(choisir);
+    const lots = {};
+    liste.forEach((x) => {
+      const g = poidsTache(x.t) + "|" + x.la.slice().sort().join(",");
+      (lots[g] = lots[g] || []).push(x);
+    });
+    Object.keys(lots).forEach((g) => varier(lots[g], foisAvant));
+    fois = foisAvant;
+    liste.forEach((x) => { fois[x.t.id + "|" + x.qui] = (fois[x.t.id + "|" + x.qui] || 0) + 1; });
+  });
+  hebdo.concat(...parJours).forEach((x) => { passages[x.cle] = { qui: x.qui, raison: x.raison, k: x.k }; });
+
+  /* 5. Le jour conseillé d'une tâche « chaque semaine » : parmi les jours À
+     VENIR où la personne est là, celui où elle a le moins à faire, puis le
+     moins chargé pour la famille, puis le plus proche. Il glisse d'un jour
+     à l'autre tant que la tâche n'est pas faite ; les attributions, elles,
+     ne dépendent pas du jour où l'on regarde. */
+  const aujourdhui = isoDate(new Date());
+  const famille = (k) => Object.keys(parJour).reduce((s, m) => s + parJour[m][k], 0);
+  etat.taches.filter((t) => estRepartie(t) && t.frequence === "semaine")
+    .sort((a, b) => poidsTache(b) - poidsTache(a) || rang(a) - rang(b))
+    .forEach((t) => {
+      const x = passages[t.id + "|" + clePeriode("semaine", lundi)];
+      if (!x || !x.qui) return;
+      const depuis = String(t.creeLe || "").slice(0, 10);
+      const sien = (k) => (parJour[x.qui] || [])[k] || 0;
+      const possibles = [0, 1, 2, 3, 4, 5, 6]
+        .filter((k) => estPresent(x.qui, jours[k]) && isoDate(jours[k]) >= depuis && isoDate(jours[k]) >= aujourdhui)
+        .sort((a, b) => sien(a) - sien(b) || famille(a) - famille(b) || a - b);
+      if (!possibles.length) return;
+      x.jour = possibles[0];
+      (parJour[x.qui] = parJour[x.qui] || [0, 0, 0, 0, 0, 0, 0])[x.jour]++;
+    });
+  return { passages: passages, charge: charge };
+}
+/* Le planning d'une semaine, recalculé dès que les tâches, les présences,
+   les réglages ou le journal changent (et chaque jour, pour le jour
+   conseillé) — et seulement alors. */
+let _plans = {};
+function planDeLaSemaine(d) {
+  const lundi = lundiDe(d);
+  const cle = isoDate(lundi);
+  const sig = [isoDate(new Date()), planningActif(), pointsActifs(), (etat.journal || []).length,
+    JSON.stringify(etat.taches), JSON.stringify(etat.membres.map((m) => [m.id, m.presence || 0]))].join("|");
+  if (_plans[cle] && _plans[cle].sig === sig) return _plans[cle].plan;
+  if (Object.keys(_plans).length >= 4) _plans = {};
+  _plans[cle] = { sig: sig, plan: calculerPlanning(lundi) };
+  return _plans[cle].plan;
+}
+/* Le passage d'une tâche répartie : { qui, raison, k, jour } — ou null. */
+function passageReparti(t, d) {
+  if (!repartieLe(t, d)) return null;
+  return planDeLaSemaine(d).passages[t.id + "|" + clePeriode(t.frequence, d)] || null;
 }
 function cleEtat(t, d) { return t.id + "|" + clePeriode(t.frequence, d); }
 function etatTache(t, d) {
@@ -1516,7 +1883,7 @@ function etatTache(t, d) {
 }
 function tachesDuMoment() {
   const d = new Date();
-  return etat.taches.filter((t) => t.actif !== false).map((t) => ({
+  return etat.taches.filter((t) => t.actif !== false && prevueLe(t, d)).map((t) => ({
     t, d, assigne: assigneDe(t, d), et: etatTache(t, d)
   }));
 }
@@ -7236,6 +7603,26 @@ function pointsActifs() {
 function macrosActives() {
   return reglagesFamille().macros === true && typeof macrosRecette === "function";
 }
+
+/* Le « mode planning » (18/09/2026) : proposer « certains jours » dans une
+   tâche. Décoché par défaut. Une tâche déjà réglée sur des jours continue
+   de les suivre si on le décoche : on cesse d'en proposer, on ne casse pas
+   un planning en cours. */
+function planningActif() {
+  return reglagesFamille().planning === true;
+}
+/* « mer. sam. · garde alternée · 1 absence » : le résumé de la présence d'un
+   membre, sur le bouton de sa fiche. Vide sans rien de noté. */
+function resumePresence(m) {
+  const p = m && m.presence;
+  if (!p) return "";
+  const bouts = [];
+  if (p.jours && p.jours.length) bouts.push(p.jours.map((k) => JOURS[k - 1].slice(0, 3) + ".").join(" "));
+  if (p.garde) bouts.push("garde alternée");
+  const a = (p.absences || []).filter((x) => x && x.au >= isoDate(new Date())).length;
+  if (a) bouts.push(pluriel(a, "absence", "absences"));
+  return bouts.join(" · ");
+}
 function nbConvives() {
   const n = Number(reglagesFamille().convives);
   return n > 0 && n <= 30 ? n : PORTIONS_BASE;
@@ -7403,6 +7790,7 @@ document.addEventListener("click", (e) => {
     case "tache-annuler": Actions.annulerFaite(v); break;
     case "tache-valider": Actions.valider(v); break;
     case "tache-refuser": Actions.refuser(v); break;
+    case "tache-attribuer": Formulaires.attribuer(v, b.dataset.date); break;
     case "tache-nouvelle": Formulaires.tache(null); break;
     case "tache-editer": Formulaires.tache(v); break;
     case "taches-filtre": ui.filtreTaches = b.dataset.valeur; rendre(); break;
