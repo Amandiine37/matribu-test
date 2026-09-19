@@ -62,9 +62,9 @@ function rienDu(emoji, texte) {
   return '<div class="vide"><span class="emoji">' + emoji + "</span>" + texte + "</div>";
 }
 function etiquetteFrequence(f, t) {
-  /* Mode planning : les jours eux-mêmes, en abrégé (« mar. · ven. »). */
-  const n = f === "jours" ? (joursDeTache(t).map((k) => JOURS[k - 1].slice(0, 3) + ".").join(" · ") || "Certains jours")
-    : f === "jour" ? "Chaque jour" : f === "mois" ? "Chaque mois" : "Chaque semaine";
+  /* Mode planning : les jours eux-mêmes, en abrégé (« mar. · ven. ») ; tous
+     les N : le rythme (« Toutes les 2 semaines »). */
+  const n = f === "jours" ? texteFrequence(t) : libelleRythme(f, rythmeDe(t));
   return '<span class="etiquette">' + n + "</span>" +
     (estRepartie(t) ? '<span class="etiquette">⚖️ répartie</span>' : "");
 }
@@ -772,7 +772,7 @@ function blocSemaineTaches(seulementMoi) {
   for (let k = 0; k < 7; k++) {
     const d = new Date(lundi.getFullYear(), lundi.getMonth(), lundi.getDate() + k);
     const iso = isoDate(d);
-    const passages = taches.filter((t) => t.frequence === "semaine" ? jourDeLaSemaine(t) === k
+    const passages = taches.filter((t) => t.frequence === "semaine" ? prevueLe(t, lundi) && jourDeLaSemaine(t) === k
       : prevueLe(t, d) && iso >= debutPlanning(t))
       .map((t) => ({ t: t, qui: assigneDe(t, d), et: etat.etats[cleEtat(t, d)] || { statut: "afaire" } }))
       .filter((x) => !seulementMoi || x.qui === moi.id);
@@ -810,6 +810,28 @@ function blocSemaineTaches(seulementMoi) {
   return bloc("📅 La semaine", (taches.some(estRepartie) ? ligneCharges(lundi) : "") + lignes.join(""));
 }
 
+/* PLUS TARD (« tous les N », 19/09/2026) : une tâche qui ne tombe pas cette
+   fois-ci ne disparaît pas sans rien dire — on dit quand elle revient, et qui
+   s'en occupera. */
+function blocPlusTard(seulementMoi) {
+  const auj = new Date();
+  const lignes = etat.taches.filter((t) => t.actif !== false && rythmeDe(t) > 1 && !periodeActive(t, auj))
+    .map((t) => { const d = prochaineOccurrence(t, auj); return { t: t, d: d, qui: assigneDe(t, d) }; })
+    .filter((x) => !seulementMoi || x.qui === moi.id)
+    .sort((a, b) => a.d - b.d)
+    .map((x) => {
+      const m = membre(x.qui);
+      return '<div class="ligne">' + avatarDe(m) +
+        '<div class="ligne-corps"><b>' + esc((x.t.emoji || "🧹") + " " + x.t.nom) + "</b>" +
+        "<small>" + esc((m ? m.prenom + " · " : "") + quandReviendra(x.t)) + "</small>" +
+        '<span class="etiquettes">' + etiquetteFrequence(x.t.frequence, x.t) + "</span></div>" +
+        (estAdmin() ? '<button class="btn mini icone" data-action="tache-editer" data-id="' + esc(x.t.id) + '">✏️</button>' : "") +
+        "</div>";
+    });
+  if (!lignes.length) return "";
+  return '<div class="sous-titre"><h3>⏭️ Plus tard</h3></div><div class="carte">' + lignes.join("") + "</div>";
+}
+
 Vues.taches = function () {
   const h = [];
   h.push('<div class="segments">' +
@@ -823,12 +845,18 @@ Vues.taches = function () {
     h.push(carteAjout("tache-nouvelle", "Nouvelle tâche",
       "qui la fait, à quelle fréquence, combien de points"));
   }
+  /* Les post-it du frigo (19/09/2026) : la semaine sur papier, un par personne. */
+  if (etat.taches.some((t) => t.actif !== false)) {
+    h.push('<div class="rangee-btn" style="margin-bottom:1rem">' +
+      '<button class="btn doux" data-action="taches-afficher">🖨️ Post-it pour le frigo</button></div>');
+  }
 
   const toutes = tachesDuMoment();
   /* Mode planning : la semaine jour par jour. Elle reste affichée un jour
      sans aucune tâche — c'est justement là qu'on veut voir ce qui vient. */
   const semaine = blocSemaineTaches(ui.filtreTaches === "moi");
-  if (!toutes.length && !semaine) {
+  const plusTard = blocPlusTard(ui.filtreTaches === "moi");
+  if (!toutes.length && !semaine && !plusTard) {
     h.push(rienDu("🧹", estAdmin()
       ? "Aucune tâche pour l'instant.<br>Appuyez sur <b>Nouvelle tâche</b>, juste au-dessus."
       : "Aucune tâche pour l'instant."));
@@ -850,7 +878,9 @@ Vues.taches = function () {
 
   if (!liste.length) {
     h.push(rienDu("🎉", semaine ? "Rien d'autre à faire aujourd'hui."
+      : !toutes.length ? "Rien à faire en ce moment."     // tout est « plus tard »
       : "Aucune tâche ne vous est attribuée en ce moment."));
+    h.push(plusTard);
     return h.join("");
   }
 
@@ -865,6 +895,7 @@ Vues.taches = function () {
     h.push('<div class="carte">' + g.map((x) => ligneTache(x, false)).join("") + "</div>");
   });
 
+  h.push(plusTard);
   return h.join("");
 };
 
@@ -1675,7 +1706,8 @@ Vues.admin = function () {
       ? etat.taches.map((t) =>
         '<div class="ligne"><span style="font-size:1.2rem">' + esc(t.emoji || "🧹") + "</span>" +
         '<div class="ligne-corps"><b>' + esc(t.nom) + "</b><small>" +
-        (t.frequence === "jour" ? "chaque jour" : t.frequence === "mois" ? "chaque mois" : "chaque semaine") +
+        texteFrequence(t) +
+        (rythmeDe(t) > 1 && !periodeActive(t, new Date()) ? " (revient " + quandReviendra(t) + ")" : "") +
         " • " + t.points + " pts • " +
         (participantsValides(t).length
           ? pluriel(participantsValides(t).length, "participant", "participants")

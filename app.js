@@ -153,7 +153,7 @@ const EMOJIS_LISTES = [
   "🥩", "🧊", "🧽", "🧼", "🧴", "💊", "🎁", "🎂", "🎄", "🎒",
   "✏️", "🏕️", "🌻", "🔧", "📦", "👶", "🐾", "🐶", "🍼", "🎨"];
 
-const VERSION = "0.56 bêta";
+const VERSION = "0.58 bêta";
 
 /* ---------- Demenagement vers matribu-app.fr ----------
    L'application vit a DEUX adresses pendant la transition : l'ancienne
@@ -287,31 +287,19 @@ const CALENDRIER = {
    de ce que la famille peut voir et utiliser. */
 const ACTUS = [
   {
-    version: "0.56",
-    date: "2026-09-18",
-    titre: "La répartition automatique",
+    /* 0.54 → 0.58 réunies (19/09/2026) : elles arrivent ensemble chez les
+       familles, et l'accueil n'annonce que le titre de la première note. */
+    version: "0.58",
+    date: "2026-09-19",
+    titre: "Le mode planning, suite à vos retours",
     points: [
-      "En mode planning, une tâche peut être <b>répartie automatiquement</b> : chaque semaine, MaTribu confie chaque passage à la personne présente qui a <b>le moins à faire</b>, toutes tâches comprises, sans empiler plusieurs tâches le même jour.",
-      "Chaque choix dit <b>pourquoi</b> (« le moins à faire cette semaine », « pour varier »…). Un parent le change d'un geste en touchant le prénom dans « 📅 La semaine ».",
-      "Une tâche de la semaine reçoit un <b>jour conseillé</b> : le moins chargé pour la personne."
-    ]
-  },
-  {
-    version: "0.55",
-    date: "2026-09-18",
-    titre: "Qui est là, et quand",
-    points: [
-      "En mode planning, notez dans la fiche de chacun <b>ses jours de présence</b>, la <b>garde alternée</b> et les <b>absences</b> (colonie, stage…).",
-      "Une tâche qui tombe un jour où la personne n'est pas là reste <b>« à attribuer »</b> : sur l'accueil, un parent choisit qui s'en occupe — pour ce jour-là ou pour toute la semaine."
-    ]
-  },
-  {
-    version: "0.54",
-    date: "2026-09-18",
-    titre: "Le mode planning",
-    points: [
-      "Nouvelle option : choisissez <b>les jours de chaque tâche</b> — « les poubelles le mardi et le vendredi » — et voyez <b>la semaine jour par jour</b> dans l'onglet Tâches.",
-      "Avec « Chacun son tour », la personne change à chaque passage. Un administrateur active le mode dans <i>Administration › Réglages de la famille</i>."
+      "Suite à vos retours, voici le <b>mode planning</b> ! Un administrateur l'active dans <i>Administration › Réglages de la famille</i>, case <b>« Mode planning »</b>.",
+      "Choisissez <b>les jours de chaque tâche</b> — « les poubelles le mardi et le vendredi » — et voyez <b>la semaine jour par jour</b> dans l'onglet Tâches. Avec « Chacun son tour », la personne change à chaque passage.",
+      "Notez <b>qui est là, et quand</b> : jours de présence, <b>garde alternée</b>, absences (colonie, stage…). Dans <i>Administration › Membres de la famille</i>, touchez ✏️ à côté du prénom, puis <b>« 🏠 Présence de … »</b>, tout en bas de la fiche. Quand la personne prévue n'est pas là, la tâche reste <b>« à attribuer »</b> et un parent choisit qui s'en occupe.",
+      "Cochez <b>« ⚖️ Répartir automatiquement »</b> dans la fiche d'une tâche (bouton ✏️) : chaque semaine, MaTribu confie chaque passage à la personne présente qui a <b>le moins à faire</b>, et dit pourquoi. Un parent change d'un geste en touchant le prénom dans « 📅 La semaine ».",
+      "Des tâches plus espacées, avec ou sans le mode planning : <b>toutes les 2 semaines</b>, <b>tous les 3 mois</b>, <b>une fois par an</b>… Choisissez le <b>rythme</b> sous « À refaire » ; les autres fois, « ⏭️ Plus tard » dit quand la tâche revient.",
+      "Et en bonus, une idée maison : <b>« 🖨️ Post-it pour le frigo »</b>, dans l'onglet Tâches, imprime un post-it par personne, avec une case à cocher pour chaque passage.",
+      "Merci pour vos idées : elles font grandir MaTribu. Une envie, un souci ? Écrivez-nous avec le lien <b>« Signaler un problème ou proposer une idée »</b>, en haut de l'accueil."
     ]
   },
   {
@@ -1537,13 +1525,103 @@ function joursDeTache(t) {
   return ((t && t.jours) || []).map(Number).filter((n) => n >= 1 && n <= 7)
     .sort((a, b) => a - b).filter((n, k, l) => l.indexOf(n) === k);
 }
-/* La tâche tombe-t-elle ce jour-là ? Toujours vrai pour les autres fréquences. */
-function prevueLe(t, d) {
-  return !t || t.frequence !== "jours" || joursDeTache(t).indexOf(numJour(d)) !== -1;
+/* TOUS LES N (19/09/2026, demandé par une famille) : t.tous = N (2 et plus)
+   et t.tousDepuis, le premier jour de la première période où la tâche tombe.
+   Elle revient une période sur N — un jour sur deux, une semaine sur deux, un
+   mois sur trois ; pour « certains jours », une semaine sur N — et n'apparaît
+   pas les autres fois. Sans t.tous : chaque période, comme avant. Les clés
+   d'état et de points restent celles de la période (jour, semaine, mois). */
+const RYTHMES = { jour: [1, 2, 3, 4, 5, 6], jours: [1, 2, 3, 4], semaine: [1, 2, 3, 4, 6, 8], mois: [1, 2, 3, 4, 6, 12] };
+function rythmeDe(t) {
+  const n = Math.floor(Number(t && t.tous) || 1);
+  return n >= 2 && /^\d{4}-\d{2}-\d{2}$/.test(String(t.tousDepuis || "")) ? n : 1;
 }
-/* Le prochain jour où elle tombe, à partir de d (d compris). */
+function uniteRythme(t) { return t.frequence === "jours" ? "semaine" : t.frequence; }
+/* Combien de périodes depuis la première (négatif avant elle). */
+function periodesDepuis(t, d) {
+  const u = uniteRythme(t);
+  return indexPeriode(u, d) - indexPeriode(u, deIso(t.tousDepuis));
+}
+function periodeActive(t, d) {
+  const n = rythmeDe(t);
+  return n === 1 || ((periodesDepuis(t, d) % n) + n) % n === 0;
+}
+/* « Toutes les 2 semaines », « Tous les 3 mois », « Une fois par an »… */
+function libelleRythme(freq, n) {
+  if (freq === "jour") return n === 1 ? "Chaque jour" : "Tous les " + n + " jours";
+  if (freq === "jours") return n === 1 ? "Chaque semaine" : "Une semaine sur " + n;
+  if (freq === "mois") return n === 1 ? "Chaque mois" : n === 12 ? "Une fois par an" : "Tous les " + n + " mois";
+  return n === 1 ? "Chaque semaine" : "Toutes les " + n + " semaines";
+}
+/* La fréquence entière, en minuscules : « mar. · ven. », « toutes les 2
+   semaines », « mar. · une semaine sur 2 ». */
+function texteFrequence(t) {
+  const n = rythmeDe(t);
+  if (t.frequence !== "jours") return libelleRythme(t.frequence, n).toLowerCase();
+  const j = joursDeTache(t).map((k) => JOURS[k - 1].slice(0, 3) + ".").join(" · ") || "certains jours";
+  return n === 1 ? j : j + " · une semaine sur " + n;
+}
+/* Dans combien de périodes la tâche revient (0 : celle-ci). */
+function departRythme(t) {
+  const n = rythmeDe(t);
+  return n === 1 ? 0 : ((-periodesDepuis(t, new Date()) % n) + n) % n;
+}
+/* Le premier jour de la période qui commence dans k périodes. */
+function debutRythme(freq, k) {
+  const a = new Date();
+  if (freq === "jour") return isoDate(new Date(a.getFullYear(), a.getMonth(), a.getDate() + k));
+  if (freq === "mois") return isoDate(new Date(a.getFullYear(), a.getMonth() + k, 1));
+  const l = lundiDe(a);
+  return isoDate(new Date(l.getFullYear(), l.getMonth(), l.getDate() + 7 * k));
+}
+/* « aujourd'hui », « la semaine prochaine », « dans 2 mois »… */
+function libelleDepart(freq, k) {
+  if (freq === "jour") return k === 0 ? "aujourd'hui" : k === 1 ? "demain" : k === 2 ? "après-demain" : "dans " + k + " jours";
+  if (freq === "mois") return k === 0 ? "ce mois-ci" : k === 1 ? "le mois prochain" : "dans " + k + " mois";
+  return k === 0 ? "cette semaine" : k === 1 ? "la semaine prochaine" : "dans " + k + " semaines";
+}
+/* Pose le rythme choisi dans le formulaire. Même rythme, même phase : on garde
+   l'ancienne date, sinon « chacun son tour » repartirait de zéro à chaque
+   enregistrement. */
+function poserRythme(t, freq, n, k) {
+  if (!(n >= 2)) { delete t.tous; delete t.tousDepuis; return; }
+  const debut = debutRythme(freq, k);
+  if (t.tous === n && rythmeDe(t) === n && periodeActive(t, deIso(debut))) return;
+  t.tous = n;
+  t.tousDepuis = debut;
+}
+/* Quand la tâche revient, en toutes lettres : « demain », « la semaine
+   prochaine », « en décembre »… */
+function quandReviendra(t) {
+  const a = new Date();
+  const x = prochaineOccurrence(t, a);
+  if (t.frequence === "jour" || t.frequence === "jours") {
+    const e = joursEntre(isoDate(a), isoDate(x));
+    return e === 0 ? "aujourd'hui" : e === 1 ? "demain" : e === 2 ? "après-demain" : "le " + dateJolie(isoDate(x));
+  }
+  if (t.frequence === "mois") {
+    const e = indexPeriode("mois", x) - indexPeriode("mois", a);
+    return e === 0 ? "ce mois-ci" : e === 1 ? "le mois prochain"
+      : "en " + x.toLocaleDateString("fr-FR", x.getFullYear() === a.getFullYear()
+        ? { month: "long" } : { month: "long", year: "numeric" });
+  }
+  const e = indexPeriode("semaine", x) - indexPeriode("semaine", a);
+  return e === 0 ? "cette semaine" : e === 1 ? "la semaine prochaine"
+    : "la semaine du " + dateJolie(isoDate(lundiDe(x))).replace(/^\S+\s/, "");
+}
+
+/* La tâche tombe-t-elle ce jour-là ? Ses jours pour une tâche « certains
+   jours » ; pour toutes, seulement une période sur N (« tous les N »). */
+function prevueLe(t, d) {
+  if (!t) return true;
+  if (t.frequence === "jours" && joursDeTache(t).indexOf(numJour(d)) === -1) return false;
+  return periodeActive(t, d);
+}
+/* Le prochain jour où elle tombe, à partir de d (d compris) — jusqu'à un an
+   pour « une fois par an ». */
 function prochaineOccurrence(t, d) {
-  for (let k = 0; k < 7; k++) {
+  const limite = rythmeDe(t) === 1 ? 7 : 400;
+  for (let k = 0; k < limite; k++) {
     const x = new Date(d.getFullYear(), d.getMonth(), d.getDate() + k);
     if (prevueLe(t, x)) return x;
   }
@@ -1554,10 +1632,14 @@ function prochaineOccurrence(t, d) {
    mardi suivant de nouveau le suivant de la liste. Même calcul sur tous
    les téléphones : rien à enregistrer. */
 function indexRotation(t, d) {
-  if (t.frequence !== "jours") return indexPeriode(t.frequence, d);
+  /* Tous les N : on compte les PASSAGES, pas les périodes — une semaine sur
+     deux avec deux personnes, ce serait sinon toujours la même. */
+  const n = rythmeDe(t);
+  const periode = (u) => (n === 1 ? indexPeriode(u, d) : Math.floor(periodesDepuis(t, d) / n));
+  if (t.frequence !== "jours") return periode(t.frequence);
   const j = joursDeTache(t);
   const rang = Math.max(0, j.indexOf(numJour(d)));
-  return indexPeriode("semaine", d) * (j.length || 1) + rang;
+  return periode("semaine") * (j.length || 1) + rang;
 }
 /* Le décalage qui fait commencer la PREMIÈRE personne choisie au prochain
    passage (aujourd'hui pour une tâche ordinaire, comme avant). */
@@ -1659,7 +1741,7 @@ function passagesAAttribuer() {
         const absent = absentDuTour(t, d);
         if (absent) res.push({ t: t, d: d, absent: absent });
       }
-    } else {
+    } else if (prevueLe(t, auj)) {        // tous les N : pas cette période
       const absent = absentDuTour(t, auj);
       if (absent) res.push({ t: t, d: auj, absent: absent });
     }
@@ -1750,7 +1832,7 @@ function calculerPlanning(lundi) {
   etat.taches.forEach((t) => {
     if (t.actif === false || t.frequence === "mois" || !participantsValides(t).length) return;
     const depuis = t.joursDepuis || String(t.creeLe || "").slice(0, 10);
-    const periodes = t.frequence === "semaine" ? [null]
+    const periodes = t.frequence === "semaine" ? (prevueLe(t, lundi) ? [null] : [])
       : [0, 1, 2, 3, 4, 5, 6].filter((k) => prevueLe(t, jours[k]) && isoDate(jours[k]) >= depuis);
     periodes.forEach((k) => {
       const d = k === null ? lundi : jours[k];
@@ -7816,6 +7898,7 @@ document.addEventListener("click", (e) => {
     case "liste-nouvelle": Formulaires.liste(null); break;
     case "liste-editer": Formulaires.liste(listeCourante().id); break;
     case "liste-afficher": Formulaires.listeAAfficher(); break;
+    case "taches-afficher": Formulaires.tachesAAfficher(); break;
     case "course-deplacer": Formulaires.deplacerCourse(v); break;
 
     /* réserve */

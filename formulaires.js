@@ -100,6 +100,8 @@ Formulaires.tache = function (tid) {
         '<p class="aide" style="margin:-.6rem 0 1rem">Chaque jour coché est une tâche à part : ' +
         "faite, validée et comptée ce jour-là. Avec « Chacun son tour », la personne change à chaque passage.</p></div>"
       : "") +
+    /* Tous les N (19/09/2026) : le rythme et le départ, remplis par majRythme(). */
+    '<div id="zone-rythme"></div>' +
     (pointsActifs()
       ? '<label class="champ"><span>Points gagnés</span>' +
         '<input type="number" name="points" value="' + (cour.points || 10) + '" min="0" max="500" required></label>'
@@ -130,12 +132,17 @@ Formulaires.tache = function (tid) {
     '<span style="margin:0">Mettre en pause</span></label>' +
     /* Brique 3 : une tâche répartie n'a pas de « suivant » : on dit qui, et pourquoi. */
     (t && assigne && estRepartie(t)
-      ? '<div class="bandeau info">⚖️<div>Au prochain passage : <b>' + esc(assigne.prenom) + "</b>" +
-        (raisonActuelle ? " (" + esc(raisonActuelle) + ")" : "") + ".</div></div>"
+      ? '<div class="bandeau info">⚖️<div>Au prochain passage' +
+        /* Tous les N : pas cette fois-ci — on dit quand, et la raison (dite
+           pour la semaine en cours) attend ce jour-là. */
+        (periodeActive(t, new Date()) ? "" : " (" + esc(quandReviendra(t)) + ")") +
+        " : <b>" + esc(assigne.prenom) + "</b>" +
+        (raisonActuelle && periodeActive(t, new Date()) ? " (" + esc(raisonActuelle) + ")" : "") + ".</div></div>"
       : "") +
     (t && assigne && !estRepartie(t)
       ? '<div class="bandeau info">👤<div>Actuellement : <b>' + esc(assigne.prenom) + "</b> " +
-      (t.frequence === "jours" ? "au prochain passage, " + JOURS[numJour(quand) - 1] : libellePeriode(t.frequence)) +
+      (rythmeDe(t) > 1 && !periodeActive(t, new Date()) ? quandReviendra(t)
+        : t.frequence === "jours" ? "au prochain passage, " + JOURS[numJour(quand) - 1] : libellePeriode(t.frequence)) +
       '. <button type="button" class="lien" data-role="tourner">Passer au suivant</button></div></div>'
       : "") +
     boutonsFormulaire(t ? "Enregistrer" : "Créer la tâche", !!t) +
@@ -153,6 +160,28 @@ Formulaires.tache = function (tid) {
     if (zoneJours && gFreq) gFreq.addEventListener("click", () => {
       zoneJours.hidden = valeursMulti(f, "freq")[0] !== "jours";
     });
+    /* Tous les N (19/09/2026) : le rythme proposé dépend de la fréquence ;
+       « À partir de » n'apparaît que s'il y a un choix à faire. */
+    const zoneRythme = f.querySelector("#zone-rythme");
+    let rythme = rythmeDe(cour), depart = departRythme(cour);
+    const majRythme = () => {
+      const fr = valeursMulti(f, "freq")[0] || "semaine";
+      const choix = RYTHMES[fr] || [1];
+      if (choix.indexOf(rythme) === -1) rythme = 1;
+      if (depart >= rythme) depart = 0;
+      const selRythme = '<label class="champ"><span>Rythme</span><select name="tous">' +
+        choix.map((n) => '<option value="' + n + '"' + (n === rythme ? " selected" : "") + ">" +
+          esc(libelleRythme(fr, n)) + "</option>").join("") + "</select></label>";
+      zoneRythme.innerHTML = rythme === 1 ? selRythme
+        : '<div class="duo">' + selRythme + '<label class="champ"><span>À partir de</span><select name="depart">' +
+          Array.from({ length: rythme }, (v, k) => '<option value="' + k + '"' + (k === depart ? " selected" : "") + ">" +
+            esc(libelleDepart(fr, k)) + "</option>").join("") + "</select></label></div>";
+      zoneRythme.querySelector('[name="tous"]').onchange = (ev) => { rythme = Number(ev.target.value) || 1; majRythme(); };
+      const selDepart = zoneRythme.querySelector('[name="depart"]');
+      if (selDepart) selDepart.onchange = (ev) => { depart = Number(ev.target.value) || 0; };
+    };
+    majRythme();
+    if (gFreq) gFreq.addEventListener("click", majRythme);
     /* Brique 3 : « Répartir automatiquement » remplace « Chacun son tour » ;
        rien à répartir pour une tâche « chaque mois ». */
     const zoneRep = f.querySelector("#zone-repartition");
@@ -195,6 +224,7 @@ Formulaires.tache = function (tid) {
       if (!part.length) { toast("Choisissez au moins une personne"); return; }
       const jours = freq === "jours" ? valeursMulti(f, "jours").map(Number).sort((a, b) => a - b) : [];
       if (freq === "jours" && !jours.length) { toast("Cochez au moins un jour"); return; }
+      const tous = Number(d.get("tous")) || 1, depart = Number(d.get("depart")) || 0;   // tous les N
 
       if (t) {
         t.nom = String(d.get("nom")).trim();
@@ -204,12 +234,18 @@ Formulaires.tache = function (tid) {
            ce qui reste le cas pour les autres fréquences). */
         const joursAvant = JSON.stringify(joursDeTache(t));
         const freqChange = t.frequence !== freq;
+        const rythmeAvant = rythmeDe(t) + "|" + (t.tousDepuis || "");
         t.frequence = freq;
         if (freq === "jours") t.jours = jours; else delete t.jours;
+        /* Tous les N : un nouveau rythme fait, lui aussi, commencer la première
+           personne choisie au prochain passage. */
+        poserRythme(t, freq, tous, depart);
+        const rythmeChange = rythmeDe(t) + "|" + (t.tousDepuis || "") !== rythmeAvant;
         if (freq === "jours" && (freqChange || JSON.stringify(jours) !== joursAvant)) {
           t.decalage = calageRotation(t, part.length);
           t.joursDepuis = isoDate(new Date());   // la semaine ne remonte pas avant
-        } else if (freqChange) t.decalage = 0;
+        } else if (rythmeChange) t.decalage = calageRotation(t, part.length);
+        else if (freqChange) t.decalage = 0;
         if (freq !== "jours") delete t.joursDepuis;
         /* Points éteints : le champ n'est pas affiché. On GARDE la valeur
            existante, sinon modifier une tâche la remettrait à zéro et le
@@ -236,6 +272,7 @@ Formulaires.tache = function (tid) {
         // on cale la rotation pour que la 1re personne choisie commence maintenant
         if (freq === "jours") { nouvelle.jours = jours; nouvelle.joursDepuis = isoDate(new Date()); }
         if (d.get("repartition")) { nouvelle.repartition = true; nouvelle.repartieDepuis = isoDate(new Date()); }
+        poserRythme(nouvelle, freq, tous, depart);
         nouvelle.decalage = calageRotation(nouvelle, part.length);
         etat.taches.push(nouvelle);
       }
@@ -999,6 +1036,8 @@ Formulaires.reglagesFamille = function () {
     ' style="width:auto;margin-top:.25rem"><span style="margin:0">Mode planning' +
     '<br><small style="font-weight:400">Choisir les jours de chaque tâche (« les poubelles ' +
     "le mardi et le vendredi »), et voir la semaine jour par jour dans l'onglet Tâches. " +
+    "Ajoute aussi le bouton « 🏠 Présence de … » dans la fiche de chaque membre, et la case " +
+    "« ⚖️ Répartir automatiquement » dans la fiche d'une tâche. " +
     "Décoché, les tâches déjà réglées sur des jours les gardent.</small></span></label>" +
 
     boutonsFormulaire("Enregistrer", false) + "</form>";
@@ -4100,6 +4139,107 @@ Formulaires.listeAAfficher = function () {
       const b = fe.querySelector('[data-role="imprimer"]');
       if (b) b.onclick = () => window.print();
     });
+};
+
+/* ==================== LES POST-IT DU FRIGO ====================
+
+   Demandés par Amandine le 19/09/2026 : les tâches à coller sur le frigo,
+   façon post-it. Un post-it par personne, avec ses tâches de la semaine et
+   une case par passage, à cocher au crayon ; ce que personne n'a encore pris
+   va sur « À se partager ». Même calcul que l'écran (tour, présences,
+   répartition, tous les N) : le papier dit la même chose que l'appli.
+   Cette semaine : seulement ce qui reste à faire, à partir d'aujourd'hui. */
+const COULEURS_POSTIT = ["#fff1a8", "#ffd6e6", "#cfe8ff", "#d8f5c8", "#ffe2bf", "#e7dcff"];
+function postitsDeLaSemaine(k) {
+  const auj = new Date();
+  const aujIso = isoDate(auj);
+  const lundi = lundiDe(new Date(auj.getFullYear(), auj.getMonth(), auj.getDate() + 7 * k));
+  const jours = [0, 1, 2, 3, 4, 5, 6].map((j) => new Date(lundi.getFullYear(), lundi.getMonth(), lundi.getDate() + j));
+  const fmt = { day: "numeric", month: "long" };
+  /* Cette semaine : seulement ce qui reste, d'où « d'ici dimanche ». */
+  const titre = k === 0 ? "D'ici " + jours[6].toLocaleDateString("fr-FR", { weekday: "long", day: "numeric", month: "long" })
+    : "Semaine du " + (jours[0].getMonth() === jours[6].getMonth() ? jours[0].getDate()
+      : jours[0].toLocaleDateString("fr-FR", fmt)) + " au " + jours[6].toLocaleDateString("fr-FR", fmt);
+  const fait = (t, d) => { const e = etat.etats[cleEtat(t, d)]; return !!e && e.statut !== "afaire"; };
+  const parQui = new Map();                  // "" : à se partager
+  const noter = (qui, t, quoi) => {
+    const cle = qui || "";
+    if (!parQui.has(cle)) parQui.set(cle, new Map());
+    const liste = parQui.get(cle);
+    if (!liste.has(t.id)) liste.set(t.id, { t: t, jours: [], une: "" });
+    if (typeof quoi === "number") liste.get(t.id).jours.push(quoi); else liste.get(t.id).une = quoi;
+  };
+  etat.taches.filter((t) => t.actif !== false && participantsValides(t).length).forEach((t) => {
+    if (t.frequence === "jour" || t.frequence === "jours") {
+      jours.forEach((d, j) => {
+        if (!prevueLe(t, d) || isoDate(d) < aujIso || fait(t, d)) return;
+        noter(assigneDe(t, d), t, j);
+      });
+      return;
+    }
+    /* Une tâche de la semaine ou du mois : une seule case. Le mois est celui
+       du jeudi, comme pour le numéro des semaines. */
+    const d = t.frequence === "mois" ? jours[3] : lundi;
+    if (!prevueLe(t, d) || fait(t, d)) return;
+    const p = passageReparti(t, d);
+    noter(assigneDe(t, d), t, t.frequence === "mois" ? "dans le mois"
+      : "dans la semaine" + (p && p.jour != null ? " · " + JOURS[p.jour] + " conseillé" : ""));
+  });
+  const rang = (x) => (x.jours.length ? 0 : x.une === "dans le mois" ? 2 : 1);
+  const postits = etat.membres.map((m) => m.id).concat([""]).filter((mid) => parQui.has(mid)).map((mid, n) => {
+    const m = membre(mid);
+    const liste = [...parQui.get(mid).values()].sort((a, b) => rang(a) - rang(b) ||
+      etat.taches.indexOf(a.t) - etat.taches.indexOf(b.t));
+    const aGagner = pointsActifs()
+      ? liste.reduce((s, x) => s + (Number(x.t.points) || 0) * (x.jours.length || 1), 0) : 0;
+    return '<div class="postit" style="--postit:' + COULEURS_POSTIT[n % COULEURS_POSTIT.length] + '">' +
+      '<div class="postit-qui">' + esc(m ? (m.emoji || "🙂") + " " + m.prenom : "🤝 À se partager") + "</div>" +
+      liste.map((x) => '<div class="postit-tache"><div class="postit-nom">' +
+        esc((x.t.emoji || "🧹") + " " + x.t.nom) +
+        (pointsActifs() && x.t.points ? " <small>+" + esc(String(x.t.points)) + "</small>" : "") + "</div>" +
+        '<div class="postit-cases">' + (x.jours.length
+          ? x.jours.map((j) => '<span><i class="case"></i>' + JOURS[j].slice(0, 3) + "</span>").join("")
+          : '<span><i class="case"></i>' + esc(x.une) + "</span>") + "</div></div>").join("") +
+      (m && aGagner ? '<div class="postit-total">⭐ ' + aGagner + " points à gagner</div>" : "") +
+      "</div>";
+  });
+  return {
+    titre: titre,
+    html: postits.length ? postits.join("")
+      : '<p class="aide centre">Aucune tâche ' + (k ? "la semaine prochaine" : "d'ici dimanche") + ".</p>"
+  };
+}
+Formulaires.tachesAAfficher = function () {
+  const html = '<div id="postits-frigo">' +
+    '<h2 style="font-family:var(--font-display);text-align:center;margin:.2rem 0 .1rem">' +
+    esc(etat.famille.nom) + "</h2>" +
+    '<p class="aide centre" id="postits-quand" style="margin:0 0 .8rem"></p>' +
+    '<div class="segments sans-impression" style="margin-bottom:.9rem">' +
+    '<button type="button" class="on" data-role="postit-semaine" data-valeur="0">Cette semaine</button>' +
+    '<button type="button" data-role="postit-semaine" data-valeur="1">La semaine prochaine</button></div>' +
+    '<div class="postits" id="postits"></div>' +
+    '<p class="aide sans-impression" style="margin:.9rem 0 0">Astuce : pour garder les couleurs sur ' +
+    "le papier, cochez « Graphiques d'arrière-plan » dans les réglages d'impression si votre " +
+    "navigateur le propose.</p>" +
+    '<div class="rangee-btn sans-impression" style="margin-top:1rem">' +
+    '<button class="btn" data-action="fermer">Fermer</button>' +
+    '<button class="btn principal" data-role="imprimer">🖨️ Imprimer</button></div></div>';
+  ouvrirFeuille("", html, (f) => {
+    /* Changer de semaine remplit la même feuille : la rouvrir referait
+       « figer la page » une seconde fois. */
+    const remplir = (k) => {
+      const p = postitsDeLaSemaine(k);
+      f.querySelector("#postits-quand").textContent = p.titre;
+      f.querySelector("#postits").innerHTML = p.html;
+      f.querySelectorAll('[data-role="postit-semaine"]').forEach((b) =>
+        b.classList.toggle("on", Number(b.dataset.valeur) === k));
+    };
+    f.querySelectorAll('[data-role="postit-semaine"]').forEach((b) => {
+      b.onclick = () => remplir(Number(b.dataset.valeur));
+    });
+    f.querySelector('[data-role="imprimer"]').onclick = () => window.print();
+    remplir(0);
+  });
 };
 
 /* ==================== LE BILAN DE LA SEMAINE ====================
