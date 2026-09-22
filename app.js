@@ -93,7 +93,7 @@ function estAbsence(c) { return !!(c && c.absent); }
 
 /* Réglages de la famille et leurs valeurs par défaut. Déclarés ici, avec les
    autres constantes : `etatVide()` s'en sert dès le chargement du fichier. */
-const REGLAGES_DEFAUT = { convives: 4, points: true, pointsRepas: 15, antiGaspi: true, macros: false, planning: false };
+const REGLAGES_DEFAUT = { convives: 4, points: true, pointsRepas: 15, antiGaspi: true, macros: false, planning: false, motDuJour: false };
 
 /* Les palettes de couleurs (styles.css). Choisies PAR APPAREIL, comme le mode
    clair/sombre : chacun la sienne, sans droits particuliers — un réglage rangé
@@ -153,7 +153,7 @@ const EMOJIS_LISTES = [
   "🥩", "🧊", "🧽", "🧼", "🧴", "💊", "🎁", "🎂", "🎄", "🎒",
   "✏️", "🏕️", "🌻", "🔧", "📦", "👶", "🐾", "🐶", "🍼", "🎨"];
 
-const VERSION = "0.59 bêta";
+const VERSION = "0.61 bêta";
 
 /* ---------- Demenagement vers matribu-app.fr ----------
    L'application vit a DEUX adresses pendant la transition : l'ancienne
@@ -286,6 +286,28 @@ const CALENDRIER = {
    Ni correctif, ni sécurité, ni « sous le capot » : cette page ne parle que
    de ce que la famille peut voir et utiliser. */
 const ACTUS = [
+  {
+    version: "0.61",
+    date: "2026-09-22",
+    titre: "Le mot du jour",
+    points: [
+      "Un petit jeu pour toute la tribu : <b>un mot de 5 lettres à trouver en 6 essais</b>, le même pour tout le monde. Un nouveau mot arrive chaque jour à minuit.",
+      "Carré vert : la lettre est bien placée. Rond orange : elle est dans le mot, mais ailleurs. Gris : elle n'y est pas.",
+      "Pour les plus jeunes, <b>deux aides</b> : une devinette, puis la première lettre.",
+      "Chacun voit qui a trouvé et en combien d'essais, <b>sans jamais voir le mot des autres</b>. Et la <b>série de la tribu</b> compte les jours d'affilée où quelqu'un a trouvé.",
+      "Un administrateur l'active dans <i>Administration › Réglages de la famille</i>, case <b>« Le mot du jour »</b>."
+    ]
+  },
+  {
+    version: "0.60",
+    date: "2026-09-22",
+    titre: "Bien commencer, et à plusieurs",
+    points: [
+      "MaTribu vous aide à la <b>poser sur votre écran d'accueil</b>, avec le geste exact de votre téléphone : <b>« 📲 Sur l'écran d'accueil »</b>, dans <i>Premiers pas</i> sur l'accueil. Dans un navigateur, l'adresse se perd entre les onglets ; une icône, non — et c'est elle qu'on touche le matin.",
+      "L'accueil dit maintenant <b>qui n'a pas encore rejoint</b> la tribu, et depuis combien de temps son invitation attend. <b>Touchez le prénom</b> pour lui renvoyer son lien.",
+      "Une tribu se vit à plusieurs : tant qu'on y est seul, ce n'est qu'une liste de plus. C'est en faisant entrer la première personne qu'elle prend tout son sens."
+    ]
+  },
   {
     /* 0.54 → 0.58 réunies (19/09/2026) : elles arrivent ensemble chez les
        familles, et l'accueil n'annonce que le titre de la première note. */
@@ -1037,6 +1059,10 @@ function etatVide() {
     taches: [], bareme: {}, etats: {},
     courses: [], listesCourses: [], stock: [], recettes: [], repas: {}, notes: [],
     cadeaux: [], tarifs: {}, echanges: [], journal: [],
+    /* Les parties du « mot du jour », une par membre (0.60). Hors de
+       CLES_DOC, comme etats et journal : en ligne, elles vivent dans leur
+       propre sous-collection, avec leurs propres règles. */
+    motsDuJour: {},
     reglages: Object.assign({}, REGLAGES_DEFAUT), jetonUtilise: null,
     /* Place dans le programme « Familles Fondatrices » : { numero, genre,
        statut, reserveeLe, valideeLe }, ou null. Volontairement HORS de
@@ -3241,6 +3267,21 @@ const Store = {
         q.forEach((s) => j.push(Object.assign({ id: s.id }, s.data())));
         cb({ journal: j }, "journal");
       }, surErreur));
+      /* Le mot du jour (0.60) : un petit document par membre, sa partie du
+         jour et celle de la veille. Écoute à part, avec SA gestion d'erreur :
+         un refus ici (règles pas encore republiées) ne doit rien couper
+         d'autre, ni lancer la vérification d'accès. Le jeu se dit alors
+         indisponible, c'est tout. */
+      this.motsDuJourRefuses = false;
+      this._unsubs.push(fs.onSnapshot(fs.collection(d, "familles", code, "motsDuJour"), (q) => {
+        const m = {};
+        q.forEach((s) => { m[s.id] = s.data(); });
+        this.motsDuJourRefuses = false;
+        cb({ motsDuJour: m }, "motsDuJour");
+      }, (err) => {
+        console.warn("Mot du jour indisponible :", err);
+        this.motsDuJourRefuses = true;
+      }));
       /* Les recettes, dans leur document a part. Absent = famille pas encore
          deplacee : on garde alors celles du document principal. */
       this._unsubs.push(fs.onSnapshot(fs.doc(d, "familles", code, RUBRIQUES, RUBRIQUE_RECETTES), (s) => {
@@ -3653,6 +3694,23 @@ const Store = {
     } catch (err) {
       console.warn("Ligne de points refusee :", err);
       toast("Points refusés par le serveur");
+      return false;
+    }
+  },
+
+  /* --- le mot du jour : la partie d'un membre (0.60) ---
+     Le document ENTIER, jamais une fusion : les règles vérifient chacun de
+     ses champs, et une partie ne porte que des couleurs, jamais de lettres. */
+  async ecrireMotDuJour(idm, partie) {
+    if (this.mode !== "nuage") { this._ecrireLocal(this.code, etat); return true; }
+    if (this.motsDuJourRefuses) return false;
+    try {
+      await this._fs.setDoc(this._fs.doc(this._db, "familles", this.code, "motsDuJour", idm),
+        propre(partie));
+      return true;
+    } catch (err) {
+      console.warn("Partie du mot du jour refusée :", err);
+      this.derniereErreur = err;
       return false;
     }
   },
@@ -4203,13 +4261,15 @@ function appliquerDonnees(d, portee) {
   /* Les déroulés des plats fournis ne voyagent plus : on les remet ici, une
      bonne fois, pour que tout le reste de l'application les trouve. */
   if (portee === "recettes") { etat.recettes = recettesRecues(d.recettes || []); return; }
+  if (portee === "motsDuJour") { etat.motsDuJour = d.motsDuJour || {}; return; }
 
   const v = etatVide();
-  const garde = { etats: etat.etats, journal: etat.journal, recettes: etat.recettes };
+  const garde = { etats: etat.etats, journal: etat.journal, recettes: etat.recettes, motsDuJour: etat.motsDuJour };
   etat = Object.assign(v, d || {});
-  if (portee === "doc") {          // le document principal ne porte pas ces deux-la
+  if (portee === "doc") {          // le document principal ne porte pas ces trois-la
     etat.etats = garde.etats;
     etat.journal = garde.journal;
+    etat.motsDuJour = garde.motsDuJour || {};
   }
   /* Famille deja deplacee : le champ « recettes » du document principal est
      perime — il n'y est meme plus. Sans cette ligne, un instantane du
@@ -4228,7 +4288,7 @@ function appliquerDonnees(d, portee) {
   ["membres", "taches", "courses", "listesCourses", "stock", "recettes", "notes", "cadeaux",
     "echanges", "journal", "membresUid", "adminsUid"]
     .forEach((c) => { if (!Array.isArray(etat[c])) etat[c] = []; });
-  ["etats", "repas", "reglages", "bareme", "tarifs", "appareils"].forEach((c) => {
+  ["etats", "repas", "reglages", "bareme", "tarifs", "appareils", "motsDuJour"].forEach((c) => {
     if (!etat[c] || typeof etat[c] !== "object") etat[c] = {};
   });
   if (!etat.famille || typeof etat.famille !== "object") etat.famille = { nom: "", code: "" };
@@ -4301,6 +4361,10 @@ function donneesExportables() {
       (etat.appareilsInfos || {})[u] || {}));
   sortie.etatsDesTaches = etat.etats || {};
   sortie.journalDesPoints = etat.journal || [];
+  /* Le mot du jour (0.60) : la partie de chacun, aujourd'hui et la veille.
+     Des couleurs seulement (v = bien placée, o = ailleurs, g = absente) :
+     les lettres tapées ne quittent jamais l'appareil. */
+  sortie.motDuJour = etat.motsDuJour || {};
   return propre(sortie);
 }
 
@@ -4353,7 +4417,7 @@ async function partagerExport() {
    posé, et le serveur refuserait qu'on le réécrive — il est irréversible. */
 async function supprimerFamilleEntiere(code, suivi, dejaMarquee) {
   const dire = typeof suivi === "function" ? suivi : () => { };
-  const bilan = { journal: 0, etats: 0, invitations: 0, recettes: 0, comptes: 0, retours: 0, rubriques: 0, repere: 0, ok: false, etape: "", err: null };
+  const bilan = { journal: 0, etats: 0, motsDuJour: 0, invitations: 0, recettes: 0, comptes: 0, retours: 0, rubriques: 0, repere: 0, ok: false, etape: "", err: null };
   const etape = async (nom, message, travail) => {
     bilan.etape = nom;
     dire(message);
@@ -4373,6 +4437,15 @@ async function supprimerFamilleEntiere(code, suivi, dejaMarquee) {
     () => Store.viderSousCollection(code, "journal")))) return bilan;
   if (!(await etape("etats", "Effacement du suivi des tâches…",
     () => Store.viderSousCollection(code, "etats")))) return bilan;
+  /* Le mot du jour (0.60). Une lecture refusée, sans rien d'effacé, veut dire
+     que les règles de la 0.60 ne sont pas publiées : alors aucune partie n'a
+     jamais pu être enregistrée, et il n'y a rien à effacer. On ne bloque pas
+     la suppression de la famille pour autant. */
+  if (!(await etape("motsDuJour", "Effacement des parties du mot du jour…", async () => {
+    const r = await Store.viderSousCollection(code, "motsDuJour");
+    if (!r.ok && !r.n && r.err && r.err.code === "permission-denied") return { ok: true, n: 0 };
+    return r;
+  }))) return bilan;
   if (!(await etape("invitations", "Effacement des invitations…",
     () => Store.supprimerInvitationsDe(code)))) return bilan;
   if (!(await etape("recettes", "Retrait des recettes publiées…",
@@ -4465,6 +4538,11 @@ async function entrerDansFamille(code, membreId, opts) {
     if (!moi) return;            // entrée pas encore terminée : on garde, on ne dessine pas
     rendre();
     if (portee === "doc") Formulaires.rafraichirAppareils();   // fenêtre ouverte à jour
+    /* Le mot du jour ouvert : la tribu se met à jour sous la grille, sans
+       toucher à ce que la personne est en train de taper. */
+    if ((portee === "motsDuJour" || portee === "tout") && Formulaires.rafraichirMotDuJour) {
+      Formulaires.rafraichirMotDuJour();
+    }
   });
   /* Refus, ou profil introuvable : on ne garde RIEN de ce que le cache a pu
      livrer en chemin. Sur un appareil retire de la tribu, ses donnees ne
@@ -7707,6 +7785,12 @@ function macrosActives() {
 function planningActif() {
   return reglagesFamille().planning === true;
 }
+/* « Le mot du jour » (0.60, 19/09/2026) : un petit jeu quotidien, le même
+   mot pour toute la tribu. Décoché par défaut ; sans motdujour.js (fichier
+   absent du dépôt, ou ancienne page en cache), il ne montre rien. */
+function motDuJourActif() {
+  return reglagesFamille().motDuJour === true && typeof MOTS_DU_JOUR !== "undefined";
+}
 /* « mer. sam. · garde alternée · 1 absence » : le résumé de la présence d'un
    membre, sur le bouton de sa fiche. Vide sans rien de noté. */
 function resumePresence(m) {
@@ -7783,6 +7867,68 @@ function allerAuBloc(cible) {
 function ouvertDepuisIcone() {
   return window.navigator.standalone === true ||
     !!(window.matchMedia && window.matchMedia("(display-mode: standalone)").matches);
+}
+
+/* L'INVITE D'INSTALLATION D'ANDROID (22/09/2026).
+   Android sait proposer lui-même de poser l'icône, mais une seule fois et à
+   son heure. On retient sa proposition pour pouvoir l'ouvrir au bon moment —
+   quand la famille vient d'être créée — d'une seule pression. Sur iPhone,
+   cette proposition n'existe pas : il faut décrire le geste. */
+let inviteInstallation = null;
+window.addEventListener("beforeinstallprompt", (e) => {
+  e.preventDefault();
+  inviteInstallation = e;
+});
+window.addEventListener("appinstalled", () => { inviteInstallation = null; });
+
+/* Quelqu'un, dans la tribu, a-t-il posé l'icône ? Pour CET appareil, le
+   téléphone le dit. Pour les autres, c'est le registre des appareils : chacun
+   y note son type en rejoignant, et « · icône » s'ajoute quand la page tourne
+   hors du navigateur. */
+function iconePosee() {
+  if (ouvertDepuisIcone()) return true;
+  const infos = etat.appareilsInfos || {};
+  return Object.keys(infos).some((u) => /icône/.test((infos[u] || {}).type || ""));
+}
+
+/* Le navigateur d'Instagram, de Facebook ou de Messenger : on y arrive en
+   touchant le lien d'une publication, et il ne sait pas poser d'icône. Sa
+   mémoire est en plus séparée de celle du vrai navigateur. C'est le premier
+   obstacle à lever, avant de parler d'écran d'accueil. */
+function navigateurIntegre() {
+  const ua = navigator.userAgent || "";
+  if (/Instagram/.test(ua)) return "Instagram";
+  if (/Messenger/.test(ua)) return "Messenger";
+  if (/FBAN|FBAV|FB_IAB/.test(ua)) return "Facebook";
+  return "";
+}
+
+/* LES INVITATIONS ENVOYÉES, DE MÉMOIRE D'APPAREIL (22/09/2026).
+   Le serveur ne laisse relire une invitation qu'avec son code : impossible
+   d'en demander la liste. L'appareil qui en crée une retient donc la date,
+   pour pouvoir dire « envoyée il y a 3 jours, toujours pas ouverte ». C'est
+   un pense-bête local : il ne voyage pas d'un téléphone à l'autre, et quand
+   il ne sait rien, il ne dit rien — jamais le contraire. */
+function cleInvitations() { return "tribu:invitations:" + ((etat.famille || {}).code || ""); }
+function invitationsEnvoyees() {
+  try { return JSON.parse(localStorage.getItem(cleInvitations()) || "{}"); }
+  catch (e) { return {}; }
+}
+function noterInvitationEnvoyee(membreId) {
+  if (!membreId || membreId === "nouveau") return;
+  try {
+    const t = invitationsEnvoyees();
+    t[membreId] = new Date().toISOString();
+    localStorage.setItem(cleInvitations(), JSON.stringify(t));
+  } catch (e) { }
+}
+function inviteDepuis(membreId) {
+  const d = invitationsEnvoyees()[membreId];
+  if (!d) return "";
+  const jours = Math.floor((Date.now() - new Date(d).getTime()) / 86400000);
+  return jours <= 0 ? "invitation envoyée aujourd'hui"
+    : jours === 1 ? "invitation envoyée hier"
+      : "invitation envoyée il y a " + jours + " jours";
 }
 
 function ongletsMasques() {
@@ -7927,6 +8073,8 @@ document.addEventListener("click", (e) => {
 
     /* quoi de neuf */
     case "actu": Formulaires.actu(); break;
+    /* le mot du jour (motdujour.js) */
+    case "mot-jour": if (Formulaires.motDuJour) Formulaires.motDuJour(); break;
     case "actu-saison": {
       /* On emmène sur le cahier, filtre « de saison » posé : la note parle de
          ce qui arrive sur les étals, autant montrer quoi en faire. */
@@ -8053,7 +8201,10 @@ document.addEventListener("click", (e) => {
 
     case "membre-nouveau": Formulaires.membre(null); break;
     case "membre-editer": Formulaires.membre(v); break;
-    case "inviter": Formulaires.invitation(); break;
+    /* Depuis « Premiers pas », le prénom voyage avec le bouton : on ouvre
+       l'invitation déjà réglée sur la bonne personne. */
+    case "inviter": Formulaires.invitation(b.dataset.membre || null); break;
+    case "poser-icone": Formulaires.poserIcone(); break;
     case "masquer-conseils":
       localStorage.setItem("tribu:conseilsMasques", "1");
       rendre();
@@ -8136,12 +8287,28 @@ document.addEventListener("submit", (e) => {
   rendre();
 });
 
-/* Recherche dans la bibliotheque de recettes */
+/* RECHERCHE DANS LE CAHIER DE RECETTES (revue le 22/09/2026).
+
+   Avant, chaque lettre refabriquait tout l'écran — 626 ko de HTML pour 737
+   plats —, remplaçait le champ de saisie et lui rendait le focus. Sur un
+   téléphone, les lettres n'apparaissaient plus au rythme de la frappe.
+
+   Maintenant : on ne refait QUE la liste (`#liste-recettes`), le champ n'est
+   jamais remplacé — il garde son curseur, sa sélection et son clavier —, et on
+   attend 120 ms après la dernière lettre. Ce qui est tapé s'affiche donc tout
+   de suite : c'est le navigateur qui l'écrit, plus l'application. */
+let minuterieRecherche = null;
 document.addEventListener("input", (e) => {
   if (e.target.id !== "champ-recherche-recette") return;
   ui.rechercheRecette = e.target.value;
-  ui.focus = "champ-recherche-recette";
-  rendre();
+  clearTimeout(minuterieRecherche);
+  minuterieRecherche = setTimeout(() => {
+    const zone = document.getElementById("liste-recettes");
+    /* Plus de zone : on a changé d'écran entre-temps. */
+    if (!zone) return;
+    zone.innerHTML = listeRecettes();
+    nommerIcones(zone);
+  }, 120);
 });
 
 /* Recherche dans la réserve */
