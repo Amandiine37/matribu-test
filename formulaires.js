@@ -2606,6 +2606,12 @@ Formulaires.agenda = function (id) {
   const quand = dateJolie(n.date, true) + (heure ? " à " + heure : ", toute la journée");
   const qui = (n.concernes || []).map((i) => membre(i)).filter(Boolean);
 
+  /* Téléphone ou ordinateur : ce n'est pas le même chemin le plus court.
+     Sur un téléphone, le fichier ouvre l'agenda tout seul ; sur un ordinateur,
+     il tombe dans les téléchargements sans rien montrer — Google Agenda, lui,
+     affiche aussitôt un rendez-vous rempli (24/09/2026). */
+  const surTelephone = /iPhone|iPad|iPod|Android/.test(navigator.userAgent || "");
+
   /* Le partage de fichiers n'existe pas partout : on essaie avec CE
      fichier-ci, pas avec un autre — le téléphone peut accepter une photo et
      refuser un agenda. */
@@ -2618,16 +2624,23 @@ Formulaires.agenda = function (id) {
     (qui.length ? "<br>Pour " + esc(qui.map((m) => m.prenom).join(", ")) : "") +
     "</div></div>" +
 
-    '<p class="aide">Il ira dans l\'agenda de <b>ce téléphone</b>' +
+    '<p class="aide">Il ira dans <b>votre agenda</b>' +
     (RYTHME_ICS[n.repetition] ? ", en se répétant comme ici" : "") +
     ", avec une alerte <b>" + (n.heure ? "30 minutes avant" : "la veille au matin") +
     "</b>. Vous pourrez tout changer avant d'enregistrer.</p>" +
 
-    (partageOk
-      ? '<button class="btn principal plein" data-role="partager">📅 Ajouter à mon agenda</button>' +
-        '<button class="btn plein" data-role="fichier" style="margin-top:.5rem">Télécharger le fichier</button>'
-      : '<button class="btn principal plein" data-role="fichier">📅 Ajouter à mon agenda</button>') +
-    '<button class="btn plein" data-role="google" style="margin-top:.5rem">Ou passer par Google Agenda</button>' +
+    (surTelephone
+      ? (partageOk
+        ? '<button class="btn principal plein" data-role="partager">📅 Ajouter à mon agenda</button>' +
+          '<button class="btn plein" data-role="fichier" style="margin-top:.5rem">Télécharger le fichier</button>'
+        : '<button class="btn principal plein" data-role="fichier">📅 Ajouter à mon agenda</button>') +
+        '<button class="btn plein" data-role="google" style="margin-top:.5rem">Ou passer par Google Agenda</button>'
+      /* Sur un ordinateur : Google d'abord, et l'on prévient que le fichier,
+         lui, ne fait qu'atterrir dans les téléchargements. */
+      : '<button class="btn principal plein" data-role="google">📅 Ouvrir dans Google Agenda</button>' +
+        '<button class="btn plein" data-role="fichier" style="margin-top:.5rem">Ou télécharger le fichier (.ics)</button>' +
+        '<p class="aide" style="margin-top:.6rem">Sur un ordinateur, le fichier va dans vos ' +
+        "téléchargements : il faut ensuite l'ouvrir pour que votre logiciel d'agenda le prenne.</p>") +
 
     '<p class="aide" style="margin-top:.8rem">C\'est une <b>copie</b> : si vous modifiez ' +
     "ce rappel dans MaTribu, l'agenda ne suivra pas. MaTribu, de son côté, ne lit " +
@@ -2636,14 +2649,30 @@ Formulaires.agenda = function (id) {
 
   ouvrirFeuille("Dans mon agenda", html, (feuille) => {
     const b = (role) => feuille.querySelector('[data-role="' + role + '"]');
+    /* Le téléchargement le dit : sur un ordinateur, rien ne s'ouvre, et on ne
+       devine pas qu'un fichier est parti quelque part. */
+    const enregistrer = () => {
+      telechargerIcs(n);
+      toast("Fichier d'agenda enregistré dans vos téléchargements");
+      fermerFeuille();
+    };
     const partager = b("partager");
     if (partager) {
       partager.onclick = async () => {
-        try { await navigator.share({ files: [fichierIcs(n)], title: n.titre }); fermerFeuille(); }
-        catch (e) { /* annulé par la personne : rien de grave */ }
+        try {
+          await navigator.share({ files: [fichierIcs(n)], title: n.titre });
+          fermerFeuille();
+        } catch (e) {
+          /* Annulé par la personne : elle est toujours devant l'écran, on ne
+             fait rien. Refusé par l'appareil — certains ne savent pas
+             partager un fichier d'agenda —, on bascule sur le téléchargement :
+             sans cela il ne se passait RIEN du tout (24/09/2026). */
+          if (e && e.name === "AbortError") return;
+          enregistrer();
+        }
       };
     }
-    b("fichier").onclick = () => { telechargerIcs(n); fermerFeuille(); };
+    b("fichier").onclick = enregistrer;
     b("google").onclick = () => {
       window.open(lienGoogleAgenda(n), "_blank", "noopener");
       fermerFeuille();

@@ -10,7 +10,7 @@
 /* v3 (14/09/2026 : forcer une copie propre apres les passes de densite ; sinon v2)
  * v2 (13/09/2026) : les fichiers de l'app sont demandes en "no-cache", voir
  * plus bas. Changer ce nom fait repartir chaque appareil d'un cache propre. */
-var CACHE = "tribu-v38";
+var CACHE = "tribu-v39";
 var ASSETS = [
   "./",
   "./index.html",
@@ -18,7 +18,7 @@ var ASSETS = [
   "./recettes.js?v=5",
   "./nutrition.js?v=1",
   "./vues.js?v=30",
-  "./formulaires.js?v=26",
+  "./formulaires.js?v=27",
   "./mots5.js?v=1",
   "./motdujour.js?v=2",
   "./app.js?v=35",
