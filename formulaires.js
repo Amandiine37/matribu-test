@@ -102,6 +102,12 @@ Formulaires.tache = function (tid) {
       : "") +
     /* Tous les N (19/09/2026) : le rythme et le départ, remplis par majRythme(). */
     '<div id="zone-rythme"></div>' +
+    /* L'heure (24/09/2026), facultative. On dit tout de suite ce qu'elle fait
+       — et ce qu'elle ne fait pas —, pour ne pas laisser espérer une sonnerie. */
+    '<label class="champ"><span>À quelle heure ? (facultatif)</span>' +
+    '<input type="time" name="heure" value="' + esc(cour.heure || "") + '"></label>' +
+    '<p class="aide" style="margin:-.6rem 0 1rem">Elle s\'affiche à côté de la tâche et ' +
+    "range la journée dans l'ordre. MaTribu ne sonnera pas à cette heure-là.</p>" +
     (pointsActifs()
       ? '<label class="champ"><span>Points gagnés</span>' +
         '<input type="number" name="points" value="' + (cour.points || 10) + '" min="0" max="500" required></label>'
@@ -251,6 +257,9 @@ Formulaires.tache = function (tid) {
            existante, sinon modifier une tâche la remettrait à zéro et le
            réglage ne serait plus réversible sans perte. */
         if (pointsActifs()) t.points = Number(d.get("points")) || 0;
+        /* Heure effacée : on retire le champ plutôt que d'y laisser du vide. */
+        const heure = String(d.get("heure") || "").trim();
+        if (heure) t.heure = heure; else delete t.heure;
         t.participants = part;
         t.rotation = !!d.get("rotation");
         /* Brique 3 : la case n'existe qu'en mode planning ; sans elle, on garde. */
@@ -270,6 +279,8 @@ Formulaires.tache = function (tid) {
           decalage: 0, actif: !d.get("pause"), creeLe: new Date().toISOString()
         };
         // on cale la rotation pour que la 1re personne choisie commence maintenant
+        const heureNeuve = String(d.get("heure") || "").trim();
+        if (heureNeuve) nouvelle.heure = heureNeuve;
         if (freq === "jours") { nouvelle.jours = jours; nouvelle.joursDepuis = isoDate(new Date()); }
         if (d.get("repartition")) { nouvelle.repartition = true; nouvelle.repartieDepuis = isoDate(new Date()); }
         poserRythme(nouvelle, freq, tous, depart);
@@ -1160,13 +1171,44 @@ Formulaires.actu = function () {
 
   html += '<div class="sous-titre" style="margin-top:1.6rem"><h3>Les nouveautés</h3></div>';
 
-  html += ACTUS.map((a, i) => '<div class="actu' + (i === 0 ? " actu-neuve" : "") + '">' +
-    '<div class="actu-tete"><span class="etiquette' + (i === 0 ? " chaud" : "") + '">Version ' +
-    esc(a.version) + "</span><small>" + esc(jour(a.date)) + "</small></div>" +
-    "<h4>" + esc(a.titre) + "</h4><ul>" +
-    a.points.map((p) => "<li>" + p + "</li>").join("") + "</ul></div>").join("");
+  /* UNE NOUVEAUTÉ, UNE LIGNE (24/09/2026). Le détail ne s'ouvre que si on le
+     demande, et un bouton mène à l'écran concerné. Deux formes acceptées :
+     la simple chaîne des notes déjà écrites, et l'objet { quoi, court,
+     detail, ou } des nouvelles. */
+  const pointActu = (p) => {
+    if (typeof p === "string") return "<li>" + p + "</li>";
+    /* Un bouton réservé aux administrateurs ne s'affiche pas aux autres :
+       mieux vaut ne rien proposer que d'envoyer quelqu'un vers un refus. */
+    const ou = p.ou && (!p.ou.admin || estAdmin()) ? p.ou : null;
+    return '<li><details class="actu-point"><summary><b>' + esc(p.quoi) + "</b>" +
+      (p.court ? ' <span class="doux">— ' + esc(p.court) + "</span>" : "") + "</summary>" +
+      '<div class="actu-detail">' + p.detail +
+      (ou ? '<button class="btn mini principal" data-action="' + esc(ou.action) +
+        (ou.vue ? '" data-vue="' + esc(ou.vue) : "") + '">' + esc(ou.libelle) + "</button>" : "") +
+      "</div></details></li>";
+  };
 
-  ouvrirFeuille("✨ Quoi de neuf", html);
+  html += ACTUS.map((a, i) => {
+    const corps = "<ul>" + a.points.map(pointActu).join("") + "</ul>";
+    if (i === 0) {
+      return '<div class="actu actu-neuve">' +
+        '<div class="actu-tete"><span class="etiquette chaud">Version ' + esc(a.version) +
+        "</span><small>" + esc(jour(a.date)) + "</small></div>" +
+        "<h4>" + esc(a.titre) + "</h4>" + corps + "</div>";
+    }
+    /* Les versions passées se replient en entier : elles ont déjà été lues,
+       et dix notes dépliées décourageaient la lecture de la première. */
+    return '<div class="actu"><details class="actu-ancienne"><summary>' +
+      '<span class="etiquette">Version ' + esc(a.version) + "</span> " + esc(a.titre) +
+      "</summary>" + corps + "</details></div>";
+  }).join("");
+
+  ouvrirFeuille("✨ Quoi de neuf", html, (feuille) => {
+    /* Les boutons mènent ailleurs : on referme d'abord, sinon l'écran visé
+       resterait caché derrière cette page. */
+    feuille.querySelectorAll(".actu-detail [data-action]")
+      .forEach((b) => b.addEventListener("click", fermerFeuille));
+  });
   /* Lue : la pastille s'éteint, et la saison ne redira plus « bienvenue ».
      Le rendu qui suit est indispensable : sans lui, la pastille de l'en-tête
      et celle de la carte restaient allumées jusqu'au prochain changement
@@ -2544,6 +2586,67 @@ Formulaires.invitation = async function (pourId) {
           toast("Copiez le lien ci-dessus");
         }
       };
+    };
+  });
+};
+
+/* ============== METTRE UN RAPPEL DANS SON AGENDA (24/09/2026) ==============
+
+   Trois chemins, parce qu'aucun ne marche partout — comme pour l'export des
+   données : la feuille de partage (iPhone, où un téléchargement lancé depuis
+   l'icône de l'écran d'accueil ne mène nulle part), le téléchargement
+   classique (Android, ordinateur), et Google Agenda, qui se passe de fichier.
+   L'écran montre d'abord ce qui partira : personne n'aime envoyer quelque
+   chose sans savoir quoi. */
+Formulaires.agenda = function (id) {
+  const n = (etat.notes || []).find((x) => x.id === id);
+  if (!n || !estRendezVous(n)) { toast("Ce rappel n'a pas de date"); return; }
+
+  const heure = heureJolie(n.heure);
+  const quand = dateJolie(n.date, true) + (heure ? " à " + heure : ", toute la journée");
+  const qui = (n.concernes || []).map((i) => membre(i)).filter(Boolean);
+
+  /* Le partage de fichiers n'existe pas partout : on essaie avec CE
+     fichier-ci, pas avec un autre — le téléphone peut accepter une photo et
+     refuser un agenda. */
+  let partageOk = false;
+  try { partageOk = !!(navigator.canShare && navigator.canShare({ files: [fichierIcs(n)] })); }
+  catch (e) { partageOk = false; }
+
+  const html = '<div class="bandeau info">📅<div><b>' + esc(n.titre) + "</b><br>" + esc(quand) +
+    (n.lieu ? " · " + esc(n.lieu) : "") +
+    (qui.length ? "<br>Pour " + esc(qui.map((m) => m.prenom).join(", ")) : "") +
+    "</div></div>" +
+
+    '<p class="aide">Il ira dans l\'agenda de <b>ce téléphone</b>' +
+    (RYTHME_ICS[n.repetition] ? ", en se répétant comme ici" : "") +
+    ", avec une alerte <b>" + (n.heure ? "30 minutes avant" : "la veille au matin") +
+    "</b>. Vous pourrez tout changer avant d'enregistrer.</p>" +
+
+    (partageOk
+      ? '<button class="btn principal plein" data-role="partager">📅 Ajouter à mon agenda</button>' +
+        '<button class="btn plein" data-role="fichier" style="margin-top:.5rem">Télécharger le fichier</button>'
+      : '<button class="btn principal plein" data-role="fichier">📅 Ajouter à mon agenda</button>') +
+    '<button class="btn plein" data-role="google" style="margin-top:.5rem">Ou passer par Google Agenda</button>' +
+
+    '<p class="aide" style="margin-top:.8rem">C\'est une <b>copie</b> : si vous modifiez ' +
+    "ce rappel dans MaTribu, l'agenda ne suivra pas. MaTribu, de son côté, ne lit " +
+    "jamais votre agenda.</p>" +
+    '<button class="btn plein" data-action="fermer" style="margin-top:1rem">Fermer</button>';
+
+  ouvrirFeuille("Dans mon agenda", html, (feuille) => {
+    const b = (role) => feuille.querySelector('[data-role="' + role + '"]');
+    const partager = b("partager");
+    if (partager) {
+      partager.onclick = async () => {
+        try { await navigator.share({ files: [fichierIcs(n)], title: n.titre }); fermerFeuille(); }
+        catch (e) { /* annulé par la personne : rien de grave */ }
+      };
+    }
+    b("fichier").onclick = () => { telechargerIcs(n); fermerFeuille(); };
+    b("google").onclick = () => {
+      window.open(lienGoogleAgenda(n), "_blank", "noopener");
+      fermerFeuille();
     };
   });
 };
@@ -4335,13 +4438,15 @@ function postitsDeLaSemaine(k) {
   const postits = etat.membres.map((m) => m.id).concat([""]).filter((mid) => parQui.has(mid)).map((mid, n) => {
     const m = membre(mid);
     const liste = [...parQui.get(mid).values()].sort((a, b) => rang(a) - rang(b) ||
+      String(a.t.heure || "99:99").localeCompare(String(b.t.heure || "99:99")) ||
       etat.taches.indexOf(a.t) - etat.taches.indexOf(b.t));
     const aGagner = pointsActifs()
       ? liste.reduce((s, x) => s + (Number(x.t.points) || 0) * (x.jours.length || 1), 0) : 0;
     return '<div class="postit" style="--postit:' + COULEURS_POSTIT[n % COULEURS_POSTIT.length] + '">' +
       '<div class="postit-qui">' + esc(m ? (m.emoji || "🙂") + " " + m.prenom : "🤝 À se partager") + "</div>" +
       liste.map((x) => '<div class="postit-tache"><div class="postit-nom">' +
-        esc((x.t.emoji || "🧹") + " " + x.t.nom) +
+        esc((x.t.emoji || "🧹") + " " + x.t.nom +
+          (heureTache(x.t) ? " · " + heureTache(x.t) : "")) +
         (pointsActifs() && x.t.points ? " <small>+" + esc(String(x.t.points)) + "</small>" : "") + "</div>" +
         '<div class="postit-cases">' + (x.jours.length
           ? x.jours.map((j) => '<span><i class="case"></i>' + JOURS[j].slice(0, 3) + "</span>").join("")

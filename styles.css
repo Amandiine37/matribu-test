@@ -284,6 +284,22 @@ h2.titre-section{
 .actu h4{margin:0 0 .5rem}
 .actu ul{margin:0;padding-left:1.1rem}
 .actu li{margin:.45rem 0;line-height:1.55}
+/* « Quoi de neuf » se lisait comme un pavé (24/09/2026) : une nouveauté tient
+   maintenant sur une ligne, son détail s'ouvre d'une pression, et les versions
+   passées se replient. Le petit chevron remplace le triangle du navigateur,
+   qui n'a pas la même tête d'un téléphone à l'autre. */
+.actu-point > summary,
+details.actu-ancienne > summary{cursor:pointer;list-style:none;padding:.2rem 0}
+.actu-point > summary::-webkit-details-marker,
+details.actu-ancienne > summary::-webkit-details-marker{display:none}
+.actu-point > summary::after,
+details.actu-ancienne > summary::after{content:" ›";color:var(--accent-strong);font-weight:700}
+.actu-point[open] > summary::after,
+details.actu-ancienne[open] > summary::after{content:" ⌄"}
+.actu-detail{margin:.2rem 0 .7rem;color:var(--ink-muted)}
+.actu-detail p{margin:.4rem 0}
+.actu-detail .btn{margin-top:.5rem}
+details.actu-ancienne > summary{font-weight:600}
 
 /* Les blocs repliables. .legende-sante est la légende des icônes santé du
    cahier de recettes : sans cette ligne elle s'affichait en texte ordinaire,

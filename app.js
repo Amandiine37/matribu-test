@@ -153,7 +153,7 @@ const EMOJIS_LISTES = [
   "🥩", "🧊", "🧽", "🧼", "🧴", "💊", "🎁", "🎂", "🎄", "🎒",
   "✏️", "🏕️", "🌻", "🔧", "📦", "👶", "🐾", "🐶", "🍼", "🎨"];
 
-const VERSION = "0.61 bêta";
+const VERSION = "0.63 bêta";
 
 /* ---------- Demenagement vers matribu-app.fr ----------
    L'application vit a DEUX adresses pendant la transition : l'ancienne
@@ -287,25 +287,64 @@ const CALENDRIER = {
    de ce que la famille peut voir et utiliser. */
 const ACTUS = [
   {
-    version: "0.61",
-    date: "2026-09-22",
-    titre: "Le mot du jour",
+    /* 0.60 → 0.63 réunies (24/09/2026) : elles arrivent ensemble chez les
+       familles. Une ligne par nouveauté, le détail replié dessous, et un
+       bouton vers l'écran concerné — la page était devenue un pavé. */
+    version: "0.63",
+    date: "2026-09-24",
+    titre: "Le mot du jour, et quatre nouveautés",
     points: [
-      "Un petit jeu pour toute la tribu : <b>un mot de 5 lettres à trouver en 6 essais</b>, le même pour tout le monde. Un nouveau mot arrive chaque jour à minuit.",
-      "Carré vert : la lettre est bien placée. Rond orange : elle est dans le mot, mais ailleurs. Gris : elle n'y est pas.",
-      "Pour les plus jeunes, <b>deux aides</b> : une devinette, puis la première lettre.",
-      "Chacun voit qui a trouvé et en combien d'essais, <b>sans jamais voir le mot des autres</b>. Et la <b>série de la tribu</b> compte les jours d'affilée où quelqu'un a trouvé.",
-      "Un administrateur l'active dans <i>Administration › Réglages de la famille</i>, case <b>« Le mot du jour »</b>."
-    ]
-  },
-  {
-    version: "0.60",
-    date: "2026-09-22",
-    titre: "Bien commencer, et à plusieurs",
-    points: [
-      "MaTribu vous aide à la <b>poser sur votre écran d'accueil</b>, avec le geste exact de votre téléphone : <b>« 📲 Sur l'écran d'accueil »</b>, dans <i>Premiers pas</i> sur l'accueil. Dans un navigateur, l'adresse se perd entre les onglets ; une icône, non — et c'est elle qu'on touche le matin.",
-      "L'accueil dit maintenant <b>qui n'a pas encore rejoint</b> la tribu, et depuis combien de temps son invitation attend. <b>Touchez le prénom</b> pour lui renvoyer son lien.",
-      "Une tribu se vit à plusieurs : tant qu'on y est seul, ce n'est qu'une liste de plus. C'est en faisant entrer la première personne qu'elle prend tout son sens."
+      {
+        quoi: "🔤 Le mot du jour",
+        court: "un mot de 5 lettres à trouver en 6 essais, le même pour toute la tribu",
+        detail: "<p>Un nouveau mot chaque jour à minuit. <b>Carré vert</b> : la lettre est bien placée. " +
+          "<b>Rond orange</b> : elle est dans le mot, mais ailleurs. <b>Gris</b> : elle n'y est pas.</p>" +
+          "<p>Pour les plus jeunes, deux aides : une <b>devinette</b> après 2 essais, puis la " +
+          "<b>première lettre</b> après 4. Chacun voit qui a trouvé et en combien d'essais, " +
+          "<b>sans jamais voir le mot des autres</b>, et la <b>série de la tribu</b> compte les jours " +
+          "d'affilée où quelqu'un a trouvé.</p>" +
+          "<p>Un administrateur l'active dans <i>Administration › Réglages de la famille</i>, " +
+          "case <b>« Le mot du jour »</b>.</p>",
+        ou: { libelle: "Activer le jeu", action: "admin-reglages", admin: true }
+      },
+      {
+        quoi: "📅 Un rappel dans votre agenda",
+        court: "le bouton 📅 l'envoie dans l'agenda de votre téléphone",
+        detail: "<p>Suite à la demande d'une famille. Sur un rappel qui a une date, le bouton " +
+          "<b>📅</b> le recopie dans <b>votre agenda</b> — heure, lieu, prénoms concernés, " +
+          "répétition et une alerte. C'est alors l'agenda qui vous prévient, <b>même si MaTribu " +
+          "est fermée</b>. Chacun le fait sur son propre téléphone.</p>" +
+          "<p>C'est une copie : si vous modifiez ensuite le rappel dans MaTribu, l'agenda ne suit " +
+          "pas. Et MaTribu, elle, ne lit jamais votre agenda.</p>",
+        ou: { libelle: "Voir mes rappels", action: "aller", vue: "notes" }
+      },
+      {
+        quoi: "⏰ L'heure d'une tâche",
+        court: "« sortir les poubelles à 20 h »",
+        detail: "<p>Une tâche peut porter une <b>heure</b>, facultative : dans sa fiche (bouton ✏️), " +
+          "juste sous « À refaire ». Elle s'affiche à côté de la tâche, dans <b>la semaine</b> et sur " +
+          "le <b>post-it du frigo</b>, et les tâches du jour se rangent de la plus tôt à la plus " +
+          "tard.</p><p>Elle dit quand dans la journée : MaTribu ne sonnera pas à cette heure-là.</p>",
+        ou: { libelle: "Ouvrir les tâches", action: "aller", vue: "taches" }
+      },
+      {
+        quoi: "📲 MaTribu sur votre écran d'accueil",
+        court: "pour la retrouver demain, d'une seule pression",
+        detail: "<p>Dans un navigateur, l'adresse se perd entre les onglets ; une icône, non. " +
+          "MaTribu vous donne maintenant le <b>geste exact de votre téléphone</b> pour la poser — " +
+          "ce n'est pas le même sur iPhone et sur Android.</p>" +
+          "<p>Vous le retrouverez à tout moment dans <b>Premiers pas</b>, sur l'accueil.</p>",
+        ou: { libelle: "Poser l'icône", action: "poser-icone" }
+      },
+      {
+        quoi: "💌 Qui n'a pas encore rejoint",
+        court: "l'accueil dit qui manque, et depuis combien de temps",
+        detail: "<p>Sur l'accueil, <b>Premiers pas</b> nomme les personnes dont l'invitation " +
+          "attend encore, et depuis combien de jours. <b>Touchez le prénom</b> : son lien repart " +
+          "aussitôt.</p><p>Une tribu se vit à plusieurs — tant qu'on y est seul, ce n'est qu'une " +
+          "liste de plus.</p>",
+        ou: { libelle: "Inviter quelqu'un", action: "inviter", admin: true }
+      }
     ]
   },
   {
@@ -1989,11 +2028,25 @@ function cleEtat(t, d) { return t.id + "|" + clePeriode(t.frequence, d); }
 function etatTache(t, d) {
   return etat.etats[cleEtat(t, d)] || { statut: "afaire" };
 }
+/* L'HEURE D'UNE TÂCHE (24/09/2026) : « sortir les poubelles à 20 h ».
+   Facultative, et purement indicative — elle ne fait rien sonner. Écrite
+   « 20 h » plutôt que « 20:00 », comme on la dit à voix haute. */
+function heureJolie(h) {
+  const v = String(h || "").trim();
+  if (!/^\d{1,2}:\d{2}$/.test(v)) return "";
+  /* « 7 h 30 », « 20 h » : comme on le dit, sans le zéro de tête ni les
+     minutes quand il n'y en a pas. */
+  return v.replace(/^0/, "").replace(":", " h ").replace(/ 00$/, "");
+}
+function heureTache(t) { return heureJolie(t && t.heure); }
+/* Pour ranger : ce qui a une heure passe avant ce qui n'en a pas. */
+const cleHeure = (t) => String((t && t.heure) || "99:99");
+
 function tachesDuMoment() {
   const d = new Date();
   return etat.taches.filter((t) => t.actif !== false && prevueLe(t, d)).map((t) => ({
     t, d, assigne: assigneDe(t, d), et: etatTache(t, d)
-  }));
+  })).sort((a, b) => cleHeure(a.t).localeCompare(cleHeure(b.t)));
 }
 function mesTachesAFaire() {
   return tachesDuMoment().filter((x) => x.assigne === (moi && moi.id) && x.et.statut === "afaire");
@@ -4405,6 +4458,151 @@ async function partagerExport() {
   const f = fichierExport();
   try { await navigator.share({ files: [f], title: f.name }); return true; }
   catch (e) { return false; }   // annulé par la personne : rien de grave
+}
+
+/* ============ UN RENDEZ-VOUS DANS L'AGENDA DU TÉLÉPHONE (24/09/2026) ============
+
+   Demandé par une famille. MaTribu ne sait pas sonner quand elle est fermée ;
+   l'agenda du téléphone, si. Le rendez-vous y part donc en COPIE, et c'est lui
+   qui prévient — même sans icône sur l'écran d'accueil, même si les
+   notifications ont été refusées, même si MaTribu est désinstallée.
+
+   Une copie, dans un seul sens et une seule fois : modifier le rappel ensuite
+   ne change rien dans l'agenda. L'écran le dit franchement.
+
+   Le fichier suit la norme iCalendar (RFC 5545), celle que lisent l'agenda
+   d'Apple, celui de Google, Outlook et les autres. Trois pièges respectés :
+   les lignes finissent par un retour chariot ET un saut de ligne, « ; » « , »
+   et « \ » s'échappent — sinon le rendez-vous arrive tronqué —, et une ligne
+   trop longue se poursuit sur la suivante, précédée d'une espace. */
+function echapperIcs(s) {
+  return String(s == null ? "" : s)
+    .replace(/\\/g, "\\\\").replace(/;/g, "\\;").replace(/,/g, "\\,")
+    .replace(/\r?\n/g, "\\n");
+}
+/* Le compte se fait en OCTETS, pas en lettres : un accent en vaut deux, un
+   emoji quatre. Et l'on avance caractère entier par caractère entier, sinon
+   un emoji se retrouverait coupé en deux moitiés invalides au pli. */
+const octetsDe = (c) => {
+  const p = c.codePointAt(0);
+  return p < 0x80 ? 1 : p < 0x800 ? 2 : p < 0x10000 ? 3 : 4;
+};
+function plierIcs(ligne) {
+  const morceaux = [];
+  let courant = "", octets = 0;
+  for (const c of ligne) {
+    const n = octetsDe(c);
+    /* Les lignes de suite commencent par une espace : une place en moins. */
+    const place = morceaux.length ? 73 : 74;
+    if (octets + n > place) {
+      /* Jamais de pli entre un « \ » et la lettre qu'il échappe : la norme
+         l'autorise, mais un agenda pressé y verrait une barre toute seule.
+         Un nombre impair de barres en fin de morceau = la dernière échappe
+         ce qui suit ; elle part donc avec. */
+      const barres = courant.match(/\\+$/);
+      const reporte = barres && barres[0].length % 2 === 1 ? "\\" : "";
+      morceaux.push(reporte ? courant.slice(0, -1) : courant);
+      courant = reporte;
+      octets = reporte ? 1 : 0;
+    }
+    courant += c;
+    octets += n;
+  }
+  morceaux.push(courant);
+  return morceaux.join("\r\n ");
+}
+const horodatageIcs = (d) => d.getUTCFullYear() + pad(d.getUTCMonth() + 1) + pad(d.getUTCDate()) +
+  "T" + pad(d.getUTCHours()) + pad(d.getUTCMinutes()) + "00Z";
+const jourIcs = (s) => String(s || "").replace(/-/g, "");
+const RYTHME_ICS = { hebdo: "FREQ=WEEKLY", mensuel: "FREQ=MONTHLY", annuel: "FREQ=YEARLY" };
+
+/* Le lendemain d'un jour donné. En ajoutant 24 heures, le dimanche du
+   changement d'heure en octobre dure 25 heures et l'on retomberait sur le
+   MÊME jour : on avance donc la date, pas l'horloge. */
+function lendemainDe(iso) {
+  const d = new Date(iso + "T00:00");
+  d.setDate(d.getDate() + 1);
+  return isoDate(d);
+}
+
+/* Le créneau, l'alerte, et la même chose au format attendu par Google. Avec
+   une heure : une heure de rendez-vous, alerte 30 minutes avant. Sans heure :
+   une journée entière, alerte la veille à 9 h — quinze heures avant minuit. */
+function quandIcs(n) {
+  if (n.heure) {
+    const debut = new Date(n.date + "T" + n.heure);
+    const fin = new Date(debut.getTime() + 3600000);
+    return {
+      debut: "DTSTART:" + horodatageIcs(debut), fin: "DTEND:" + horodatageIcs(fin),
+      alerte: "-PT30M", google: horodatageIcs(debut) + "/" + horodatageIcs(fin)
+    };
+  }
+  const lendemain = lendemainDe(n.date);
+  return {
+    debut: "DTSTART;VALUE=DATE:" + jourIcs(n.date), fin: "DTEND;VALUE=DATE:" + jourIcs(lendemain),
+    alerte: "-PT15H", google: jourIcs(n.date) + "/" + jourIcs(lendemain)
+  };
+}
+
+function detailsIcs(n) {
+  const qui = (n.concernes || []).map((i) => membre(i)).filter(Boolean).map((m) => m.prenom);
+  return [n.note || "", qui.length ? "Pour : " + qui.join(", ") : "Pour toute la famille",
+    "Ajouté depuis MaTribu"].filter(Boolean).join("\n");
+}
+
+function texteIcs(n) {
+  const q = quandIcs(n);
+  return [
+    "BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//MaTribu//Rappels//FR",
+    "CALSCALE:GREGORIAN", "METHOD:PUBLISH", "BEGIN:VEVENT",
+    /* Un identifiant stable : rajouté deux fois, le rendez-vous se remplace
+       au lieu de se dédoubler dans les agendas qui le savent faire. */
+    "UID:matribu-" + echapperIcs(n.id) + "@matribu-app.fr",
+    "DTSTAMP:" + horodatageIcs(new Date()),
+    "SUMMARY:" + echapperIcs(n.titre),
+    q.debut, q.fin,
+    n.lieu ? "LOCATION:" + echapperIcs(n.lieu) : "",
+    "DESCRIPTION:" + echapperIcs(detailsIcs(n)),
+    RYTHME_ICS[n.repetition] ? "RRULE:" + RYTHME_ICS[n.repetition] : "",
+    "BEGIN:VALARM", "ACTION:DISPLAY",
+    "DESCRIPTION:" + echapperIcs(n.titre),
+    "TRIGGER:" + q.alerte, "END:VALARM",
+    "END:VEVENT", "END:VCALENDAR"
+  ].filter(Boolean).map(plierIcs).join("\r\n") + "\r\n";
+}
+
+function fichierIcs(n) {
+  const nom = String(n.titre || "rappel").normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^A-Za-z0-9]+/g, "-").replace(/^-+|-+$/g, "").toLowerCase().slice(0, 40) || "rappel";
+  return new File([texteIcs(n)], nom + ".ics", { type: "text/calendar" });
+}
+
+function telechargerIcs(n) {
+  const f = fichierIcs(n);
+  const url = URL.createObjectURL(f);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = f.name;
+  a.rel = "noopener";
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 5000);
+}
+
+/* Google Agenda ouvre un rendez-vous pré-rempli depuis une simple adresse :
+   c'est le filet quand un téléphone range le fichier dans les téléchargements
+   au lieu de l'ouvrir. Rien n'y part sans que la personne l'ait demandé. */
+function lienGoogleAgenda(n) {
+  const q = quandIcs(n);
+  const p = new URLSearchParams();
+  p.set("action", "TEMPLATE");
+  p.set("text", n.titre || "Rappel");
+  p.set("dates", q.google);
+  p.set("details", detailsIcs(n));
+  if (n.lieu) p.set("location", n.lieu);
+  if (RYTHME_ICS[n.repetition]) p.set("recur", "RRULE:" + RYTHME_ICS[n.repetition]);
+  return "https://calendar.google.com/calendar/render?" + p.toString();
 }
 
 /* L'effacement complet, étape par étape, avec compte rendu.
@@ -8156,6 +8354,7 @@ document.addEventListener("click", (e) => {
     case "sante-info": Formulaires.profilsSante(b.dataset.valeur || null); break;
 
     case "note-toggle": Actions.basculerNote(v); break;
+    case "note-agenda": Formulaires.agenda(v); break;
     case "note-nouvelle": Formulaires.note(null); break;
     case "note-editer": Formulaires.note(v); break;
     case "notes-filtre": ui.filtreNotes = b.dataset.valeur; rendre(); break;

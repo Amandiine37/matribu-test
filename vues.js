@@ -727,10 +727,12 @@ function ligneTache(x, compact) {
   /* Sans les points, une tâche n'annonce plus un gain : juste quand elle
      revient, et qui s'en occupe. */
   const gain = pointsActifs() ? "+" + t.points + " pts" : "";
+  /* L'heure d'abord, comme dans l'agenda : c'est ce qu'on cherche du regard. */
+  const quand = heureTache(t);
   const sous = compact
-    ? (gain ? gain + " • " : "") + libellePeriode(t.frequence)
-    : (qui ? qui.prenom : absent ? pasLa(absent) : "personne d'assigné") +
-      (gain ? " • " + gain : "");
+    ? [quand, gain, libellePeriode(t.frequence)].filter(Boolean).join(" • ")
+    : [quand, qui ? qui.prenom : absent ? pasLa(absent) : "personne d'assigné", gain]
+      .filter(Boolean).join(" • ");
   /* Brique 3 : une tâche répartie dit pourquoi cette personne — et un parent
      la change d'un geste. */
   const rep = !compact && et.statut === "afaire" && !absent ? passageReparti(t, x.d || new Date()) : null;
@@ -804,7 +806,9 @@ function blocSemaineTaches(seulementMoi) {
     const passages = taches.filter((t) => t.frequence === "semaine" ? prevueLe(t, lundi) && jourDeLaSemaine(t) === k
       : prevueLe(t, d) && iso >= debutPlanning(t))
       .map((t) => ({ t: t, qui: assigneDe(t, d), et: etat.etats[cleEtat(t, d)] || { statut: "afaire" } }))
-      .filter((x) => !seulementMoi || x.qui === moi.id);
+      .filter((x) => !seulementMoi || x.qui === moi.id)
+      /* Une journée se lit dans l'ordre des heures ; ce qui n'en a pas suit. */
+      .sort((a, b) => String(a.t.heure || "99:99").localeCompare(String(b.t.heure || "99:99")));
     if (!passages.length && iso !== auj) continue;
     const passe = iso < auj;
     const texte = passages.length ? passages.map((x) => {
@@ -815,7 +819,8 @@ function blocSemaineTaches(seulementMoi) {
         ? '<button class="lien" style="font-size:inherit" data-action="tache-attribuer" data-id="' +
           esc(x.t.id) + '" data-date="' + iso + '">' + html + "</button>"
         : html;
-      const nom = esc((x.t.emoji || "🧹") + " " + x.t.nom);
+      const nom = esc((heureTache(x.t) ? heureTache(x.t) + " · " : "") +
+        (x.t.emoji || "🧹") + " " + x.t.nom);
       /* Brique 2 : la personne prévue n'est pas là, et personne n'est choisi. */
       const absent = aFaire ? absentDuTour(x.t, d) : null;
       if (absent) return nom + " — " + lien("à attribuer") + esc(" (" + pasLa(absent) + ")");
@@ -852,7 +857,8 @@ function blocPlusTard(seulementMoi) {
       const m = membre(x.qui);
       return '<div class="ligne">' + avatarDe(m) +
         '<div class="ligne-corps"><b>' + esc((x.t.emoji || "🧹") + " " + x.t.nom) + "</b>" +
-        "<small>" + esc((m ? m.prenom + " · " : "") + quandReviendra(x.t)) + "</small>" +
+        "<small>" + esc((heureTache(x.t) ? heureTache(x.t) + " · " : "") +
+          (m ? m.prenom + " · " : "") + quandReviendra(x.t)) + "</small>" +
         '<span class="etiquettes">' + etiquetteFrequence(x.t.frequence, x.t) + "</span></div>" +
         (estAdmin() ? '<button class="btn mini icone" data-action="tache-editer" data-id="' + esc(x.t.id) + '">✏️</button>' : "") +
         "</div>";
@@ -1532,6 +1538,13 @@ function ligneNote(n, sansQuand) {
     (badge || n.note ? '<span class="etiquettes">' + badge +
       (n.repetition && n.repetition !== "aucune" ? '<span class="etiquette">↻</span>' : "") + "</span>" : "") +
     "</div>" +
+    /* 📅 : le rendez-vous part dans l'agenda du téléphone, qui sonnera même
+       MaTribu fermée. Rien sur un pense-bête (pas de date) ni sur un rappel
+       déjà fait : il n'y a plus rien à retenir. */
+    (estRendezVous(n) && !n.fait
+      ? '<button class="btn mini icone" data-action="note-agenda" data-id="' + n.id +
+        '" aria-label="Ajouter à mon agenda">📅</button>'
+      : "") +
     '<button class="btn mini icone" data-action="note-editer" data-id="' + n.id + '">✏️</button></div>';
 }
 

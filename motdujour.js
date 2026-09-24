@@ -33,6 +33,10 @@
 
 const MOT_JOUR_LETTRES = 5;
 const MOT_JOUR_ESSAIS = 6;
+/* Les essais à faire avant d'avoir droit à chaque aide : la devinette après
+   deux vraies tentatives, la première lettre après quatre (22/09/2026, choix
+   d'Amandine). Une aide offerte tout de suite se prend sans réfléchir. */
+const MOT_JOUR_AIDES = [2, 4];
 const CLAVIER_MOT_JOUR = ["AZERTYUIOP", "QSDFGHJKLM", "WXCVBN"];
 
 /* 366 mots, UN PAR JOUR DE L'ANNÉE, dans l'ordre du calendrier d'une année
@@ -710,11 +714,20 @@ function majMotJour() {
     '<span class="aide" style="margin:0">' + esc(dateJolie(p.jour)) +
     (p.fini ? "" : " · essai " + essai + " sur " + MOT_JOUR_ESSAIS) + "</span>" +
     (p.fini || p.aide >= 2 ? "" :
-      '<button type="button" class="btn mini doux" data-mj="aide">' +
+      '<button type="button" class="btn mini doux" data-mj="aide"' +
+      (aideOuverteMotJour(p) ? "" : " disabled") + ">" +
       (p.aide ? "🔠 La première lettre" : "💡 Une devinette") + "</button>");
-  r.querySelector(".mj-indice").innerHTML = p.fini || !p.aide ? "" :
-    "Devinette : " + esc(p.cible.indice) +
-    (p.aide >= 2 ? " · commence par <b>" + esc(p.cible.mot[0]) + "</b>" : "");
+
+  /* Sous la grille : la devinette prise, et/ou le moment où la suivante
+     s'ouvrira. La ligne est déjà réservée et centrée — le bouton, lui, ne
+     tiendrait pas la phrase sur un écran étroit. */
+  const attente = p.fini || p.aide >= 2 || aideOuverteMotJour(p) ? "" :
+    (p.aide ? "🔠 La première lettre" : "💡 La devinette") +
+    " s'ouvre après " + MOT_JOUR_AIDES[p.aide] + " essais";
+  r.querySelector(".mj-indice").innerHTML = p.fini ? "" :
+    (p.aide ? "Devinette : " + esc(p.cible.indice) +
+      (p.aide >= 2 ? " · commence par <b>" + esc(p.cible.mot[0]) + "</b>" : "") : "") +
+    (attente ? (p.aide ? "<br>" : "") + attente : "");
   r.querySelector(".mj-grille").innerHTML = grilleMotJour(p);
   r.querySelector(".mj-clavier").innerHTML = p.fini ? "" : clavierMotJour(p);
   r.querySelector(".mj-fin").innerHTML = finMotJour(p);
@@ -890,9 +903,18 @@ function validerMotJour() {
   });
 }
 
+/* L'aide suivante est-elle méritée ? p.aide vaut 0 ou 1 ici : c'est le
+   nombre d'aides déjà prises, donc l'indice du seuil à atteindre. */
+function aideOuverteMotJour(p) {
+  return p.aide >= 2 || p.lignes.length >= MOT_JOUR_AIDES[p.aide];
+}
+
 function aideMotJour() {
   const p = partieMotJourOuverte;
   if (!p || p.fini || p.aide >= 2) return;
+  /* Le bouton grisé ne se touche pas, mais rien ne dit qu'il restera le seul
+     chemin : la règle se vérifie ici aussi. */
+  if (!aideOuverteMotJour(p)) return;
   p.aide++;
   retenirLettresMotJour(p);
   publierPartieMotJour(p);
