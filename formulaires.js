@@ -3376,6 +3376,52 @@ Formulaires.ajustementPoints = function (mid) {
   });
 };
 
+/* L'OBJECTIF COMMUN, VU DE N'IMPORTE OÙ (28/09/2026).
+
+   Ce que la pastille ouvre en mode collectif. On y met ce qu'on veut savoir
+   en un coup d'œil : où en est la tribu, et ce qu'on y a mis soi-même. Rien
+   sur les autres : c'est la règle de ce mode. */
+Formulaires.objectifCommun = function () {
+  const o = objectifActif();
+  const total = pointsCollectifs();
+  const part = contributionDe(moi.id);
+
+  const jauge = o
+    ? '<div class="carte" style="text-align:center">' +
+      '<div style="font-size:2rem;line-height:1">' + esc(o.emoji || "🎯") + "</div>" +
+      '<div style="font-family:var(--font-display);font-size:1.15rem;margin:.25rem 0 .1rem">' +
+      esc(o.nom) + "</div>" +
+      '<div class="barre-progression" style="margin-top:.6rem"><i style="width:' +
+      Math.min(100, Math.round(total / o.cible * 100)) + '%"></i></div>' +
+      '<div style="margin-top:.5rem;font-weight:700">' + total + " / " + o.cible + " points</div>" +
+      '<div class="aide">Points gagnés ' + depuisQuandObjectif() + "</div>" +
+      (total >= o.cible
+        ? '<div class="bandeau info" style="margin:.7rem 0 0;text-align:left">🎉<div>' +
+          "<b>Objectif atteint !</b> À vous de fêter ça.</div></div>"
+        : '<div class="aide" style="margin-top:.35rem">Encore ' + (o.cible - total) +
+          " points, tous ensemble</div>") + "</div>"
+    : '<div class="carte" style="text-align:center">' +
+      '<div style="font-size:2rem;line-height:1">🤝</div>' +
+      '<div style="font-family:var(--font-display);font-size:1.15rem;margin:.25rem 0 .1rem">' +
+      total + " points, tous ensemble</div>" +
+      '<div class="aide">Points gagnés ' + depuisQuandObjectif() + "</div>" +
+      (estAdmin()
+        ? '<p class="aide" style="margin-top:.6rem">Aucun objectif n\'est lancé. ' +
+          "Vous pouvez en poser un depuis l'administration.</p>"
+        : "") + "</div>";
+
+  const moiDedans = '<div class="carte"><div class="ligne">' + avatarDe(moi) +
+    '<div class="ligne-corps"><b>Vous y avez mis ' + part + " point" + (part > 1 ? "s" : "") +
+    "</b><small>" + (part
+      ? "sur les " + total + " de toute la tribu"
+      : "Validez une tâche ou un repas pour y contribuer.") + "</small></div></div></div>";
+
+  ouvrirFeuille("Objectif commun", jauge + moiDedans +
+    '<button class="btn plein" data-action="points-historique" style="margin-top:.8rem">' +
+    "🧾 Le détail de ce que j'ai gagné</button>" +
+    '<button class="btn plein" data-action="fermer" style="margin-top:.5rem">Fermer</button>');
+};
+
 /* REMETTRE TOUT LE MONDE À ZÉRO (28/09/2026).
 
    C'est le geste qui accompagne un nouveau défi commun : on repart à zéro

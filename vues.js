@@ -1987,16 +1987,13 @@ Vues.admin = function () {
     "à un côté : 🥫 alimentaire ou 🧴 maison. Seuls « À catégoriser » et « Autre » 🗂️ " +
     "apparaissent des deux côtés.</p>" +
     '<div class="puces" style="margin-top:.7rem">' +
-    ordreRayons(RAYONS).map((r) => {
-      const c = coteDuRayon(r);
-      return '<span class="puce">' + (c === "maison" ? "🧴 " : c === "neutre" ? "🗂️ " : "🥫 ") +
-        esc(r) + "</span>";
-    }).join("") + "</div>" +
+    ordreRayons(RAYONS).map((r) =>
+      '<span class="puce">' + emojiRayon(r) + " " + esc(r) + "</span>").join("") + "</div>" +
     (perso.length
       ? '<div class="sous-titre" style="margin-top:.9rem"><h3>Vos rayons</h3>' +
         '<span class="etiquette">' + perso.length + "</span></div>" +
         perso.map((r) => '<div class="ligne"><span style="font-size:1.2rem">' +
-          (r.cote === "maison" ? "🧴" : "🥫") + "</span>" +
+          emojiRayon(r.nom) + "</span>" +
           '<div class="ligne-corps"><b>' + esc(r.nom) + "</b><small>" +
           (r.cote === "maison" ? "côté maison" : "côté alimentaire") + " • " +
           etat.stock.filter((s) => s.rayon === r.nom).length + " en réserve</small></div>" +

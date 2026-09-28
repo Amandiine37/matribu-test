@@ -40,6 +40,25 @@ const RAYONS = ["À catégoriser", "Fruits & légumes", "Boucherie", "Poissonner
    s'affichent des DEUX côtés, justement pour qu'on les range. */
 const RAYONS_MAISON = ["Entretien", "Hygiène", "Maison", "Animaux"];
 const RAYONS_NEUTRES = ["À catégoriser", "Autre"];
+
+/* L'ÉMOJI DE CHAQUE RAYON (28/09/2026, demandé par Amandine). Jusqu'ici tous
+   les rayons alimentaires portaient le même 🥫 — celui de leur CÔTÉ — ce qui
+   donnait « Fruits & légumes 🥫 ». Le côté est déjà écrit en toutes lettres
+   au-dessus de la liste ; l'émoji, lui, sert à reconnaître le rayon. Un rayon
+   ajouté par la famille n'est pas dans cette table : il garde celui de son
+   côté, faute de mieux. */
+const EMOJI_RAYONS = {
+  "À catégoriser": "🗂️", "Fruits & légumes": "🥬", "Boucherie": "🥩",
+  "Poissonnerie": "🐟", "Crèmerie": "🧀", "Boulangerie": "🥖",
+  "Épicerie": "🥫", "Surgelés": "🧊", "Boissons": "🥤",
+  "Entretien": "🧽", "Hygiène": "🧴", "Maison": "🏠",
+  "Animaux": "🐾", "Autre": "🗂️"
+};
+function emojiRayon(r) {
+  if (EMOJI_RAYONS[r]) return EMOJI_RAYONS[r];
+  const c = coteDuRayon(r);
+  return c === "maison" ? "🧴" : c === "neutre" ? "🗂️" : "🥫";
+}
 /* Rayons ajoutés par la famille (Administration ▸ Rayons). Rangés dans les
    réglages, donc écrits par un administrateur seulement, et valables pour
    toute la maison. Chacun déclare son côté : alimentaire ou maison. */
@@ -7966,10 +7985,22 @@ function rendre() {
     bActu.innerHTML = "✨" + (aLire ? '<span class="point-maj"></span>' : "");
     bActu.title = aLire ? "Quoi de neuf — du nouveau" : "Quoi de neuf";
   }
-  /* La pastille de l'en-tête, c'est MA bourse : elle suit les compteurs
-     personnels, pas le système de points (28/09/2026). */
-  $("#btn-points").hidden = !pointsPersoActifs();
-  $("#mes-points").textContent = pointsPersoActifs() ? pointsDe(moi.id) : "0";
+  /* LA PASTILLE DE L'EN-TÊTE (28/09/2026).
+
+     Avec les compteurs personnels : ma bourse, et elle ouvre « Points &
+     cadeaux ». Sans eux : le total de la TRIBU et un 🤝, et elle ouvre
+     l'objectif commun — l'écran des points n'existe pas dans ce mode. Il
+     manquait sinon tout chiffre sous les yeux, et l'objectif n'existait que
+     sur l'accueil. Points éteints : rien du tout. */
+  const pastille = $("#btn-points");
+  const perso = pointsPersoActifs();
+  pastille.hidden = !pointsActifs();
+  pastille.title = perso ? "Mes points" : "Objectif commun";
+  pastille.dataset.action = perso ? "aller" : "objectif-commun";
+  if (perso) pastille.dataset.vue = "points"; else delete pastille.dataset.vue;
+  $("#icone-points").textContent = perso ? "🌟" : "🤝";
+  $("#mes-points").textContent = perso ? pointsDe(moi.id)
+    : pointsActifs() ? pointsCollectifs() : "0";
 
   document.querySelectorAll(".vue").forEach((s) => s.classList.remove("active"));
   const cible = $("#vue-" + v);
@@ -8015,6 +8046,7 @@ const NOMS_ICONES = {
   "echange-refuser": "Refuser la demande",
   "points-ajuster": "Ajuster les points",
   "points-zero-tous": "Remettre les compteurs à zéro",
+  "objectif-commun": "Objectif commun",
   "semaine-prec": "Semaine précédente",
   "semaine-suiv": "Semaine suivante",
   /* les rôles du bouton flottant ＋ (voir majFab) */
@@ -8548,6 +8580,7 @@ document.addEventListener("click", (e) => {
     case "echange-refuser": Actions.refuserEchange(v); break;
     case "points-ajuster": Formulaires.ajustementPoints(v); break;
     case "points-zero-tous": Formulaires.remiseAZeroTous(); break;
+    case "objectif-commun": Formulaires.objectifCommun(); break;
     case "points-historique": Formulaires.historique(v); break;
     case "cadeau-pour": Formulaires.cadeauPour(v); break;
 
