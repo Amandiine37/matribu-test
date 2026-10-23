@@ -28,6 +28,24 @@ function blocAncre(ancre, titre, contenu, lienTexte, lienAction, lienVue) {
   return html ? html.replace('<div class="carte">', '<div class="carte" id="admin-' + ancre + '">') : html;
 }
 
+/* L'ADMINISTRATION EST UN MENU, PAS UN MUR (18/10/2026, demande d'Amandine :
+   « le menu admin commence à être lourd »).
+
+   Douze cartes, quatre écrans de défilement — le code le disait lui-même en
+   posant ses raccourcis. Chaque carte se replie, et toutes le sont au départ :
+   l'écran tient sur une page et se lit comme les réglages d'un téléphone. Le
+   titre EST le bouton ; ce qu'on ouvre est gardé sur l'appareil. */
+const CARTES_ADMIN = ["membres", "inviter", "aide", "appareils", "taches", "cadeaux",
+  "recettes", "reglages", "objectif", "rayons", "onglets", "donnees"];
+function carteAdmin(ancre, titre, contenu) {
+  const ouvert = (ui.adminOuverts || []).indexOf(ancre) !== -1;
+  return '<div class="carte" id="admin-' + ancre + '">' +
+    '<button class="carte-pliable" data-action="admin-replier" data-valeur="' + esc(ancre) +
+    '" aria-expanded="' + (ouvert ? "true" : "false") + '"><span>' + titre +
+    '</span><span class="chevron">' + (ouvert ? "▾" : "▸") + "</span></button>" +
+    (ouvert ? contenu : "") + "</div>";
+}
+
 function bloc(titre, contenu, lienTexte, lienAction, lienVue) {
   /* Une carte qui renvoie vers un onglet masqué n'a plus lieu d'être : sinon
      son bouton « Tout voir » ramènerait bêtement à l'accueil. */
@@ -238,8 +256,33 @@ function carteMaContribution() {
    Le badge d'une tribu qui en a déjà un s'affiche partout : c'est une donnée
    vraie. La réservation, elle, ne se propose que là où le programme tourne —
    jamais sur le site d'essai, qui partage la base de la production. */
+/* LES PLACES SONT TOUTES PRISES (29/09/2026, demandé par Amandine).
+
+   Jusqu'ici, une famille arrivée après la centième ne voyait RIEN : ni
+   place, ni explication. On le dit, et on dit aussi la seule chose utile —
+   une place peut se libérer, et l'application la prendra toute seule. */
+function carteProgrammeComplet() {
+  return '<div class="carte">' +
+    '<div class="carte-titre">🏅 Familles Fondatrices</div>' +
+    '<p class="aide" style="margin:0">Les ' + PROGRAMME.places +
+    " places sont prises : vous arrivez juste après. MaTribu vous est ouverte " +
+    "exactement de la même façon — le programme ne donnait qu'un numéro et " +
+    "quelques attentions, jamais une fonction de plus.</p>" +
+    '<p class="aide" style="margin:.55rem 0 0">Une place peut se libérer, ' +
+    "quand une famille ne confirme pas la sienne. L'application regarde à " +
+    "chaque ouverture : si c'est le cas, elle vous en attribue une " +
+    "automatiquement, sans rien avoir à demander.</p></div>";
+}
+
 function carteFondatrice() {
   const p = placeFondatrice();
+  /* Pas de place ET le pot était vide à la dernière tentative : on explique.
+     Seul un administrateur voit ce message — c'est lui qui tente de réserver,
+     et lui seul a la réponse du serveur. */
+  if ((!p || !p.numero) && programmeActif() && estAdmin()
+      && genreDeLaTribu() === "fondatrice" && placesToutesPrises()) {
+    return carteProgrammeComplet();
+  }
   if (!p || !p.numero) return "";
   const pionniere = p.genre === "pionniere";
   const nom = pionniere ? "Famille Pionnière" : "Famille Fondatrice";
@@ -699,7 +742,8 @@ Vues.accueil = function () {
   /* Ce que la réserve a à dire. Ces deux alertes existaient déjà, mais il
      fallait ouvrir Courses ▸ Ma réserve pour les découvrir — autant dire
      jamais. Un anti-gaspi qu'on ne croise pas ne sert à rien. */
-  const sousMini = stockSousMinimum();
+  /* L'accueil ne réclame que ce qui n'est pas encore noté (06/10/2026). */
+  const sousMini = stockARacheter();
   const bientotPerime = stockBientotPerime();
   let alerteReserve = "";
   if (sousMini.length || bientotPerime.length) {
@@ -752,6 +796,24 @@ Vues.accueil = function () {
       "Récompenses", "aller", "points"));
   }
 
+  /* LE PROCHAIN ÉVÉNEMENT (18/10/2026) : c'est tout l'intérêt de l'option —
+     voir arriver la date sans avoir à y penser. Les trente jours d'avant
+     seulement : plus tôt, ce n'est pas encore un sujet. */
+  if (typeof evenementsActifs === "function" && evenementsActifs()) {
+    const prochain = evenementsAVenir()[0];
+    if (prochain && joursEntre(isoDate(new Date()), prochain.date) <= 30) {
+      const t = infoTypeEvenement(prochain.type);
+      h.push(bloc(t.emoji + " " + esc(prochain.nom || t.nom),
+        '<button class="ligne" style="width:100%;background:none;border:none;text-align:left" ' +
+        'data-action="evenement-ouvrir" data-id="' + esc(prochain.id) + '">' +
+        '<span style="font-size:1.4rem">📅</span><span class="ligne-corps">' +
+        "<b>" + esc(decompteEvenement(prochain)) + "</b><small>" +
+        esc(dateJolie(prochain.date, true) +
+          (menuVide(prochain) ? " • menu à préparer" : " • menu prêt")) +
+        "</small></span></button>", "Ouvrir", "aller", "evenements"));
+    }
+  }
+
   h.push(carteActu());
 
   return h.join("");
@@ -767,15 +829,39 @@ function ligneTache(x, compact) {
   /* Mode planning, brique 2 : la personne du tour n'est pas là et aucun parent
      n'a encore choisi — la tâche attend qu'on l'attribue. Pas de « Fait » :
      les points iraient à celui qui coche. */
-  const absent = et.statut === "afaire" ? absentDuTour(t, x.d || new Date()) : null;
-  if (et.statut === "afaire") {
+  const jourIci = isoDate(x.d || new Date());
+  /* Une ligne d'un jour passé (le bloc « Oubliées ») : on la coche encore,
+     mais on ne la reporte plus — demain, pour elle, c'est déjà hier. */
+  const passe = jourIci < isoDate(new Date());
+  /* REPORTÉE À DEMAIN (01/10/2026) : la ligne reste — une tâche qui disparaît
+     sans un mot, c'est justement ce qu'on voulait éviter — mais elle ne
+     propose plus « Fait » : ce n'est plus pour aujourd'hui. Juste de quoi
+     annuler. Et l'autre bout du report : d'où vient ce passage. */
+  const reporte = et.statut === "afaire" ? reporteLe(t, x.d || new Date()) : "";
+  const venu = et.statut === "afaire" && !reporte ? reportArrivant(t, x.d || new Date()) : null;
+  const absent = et.statut === "afaire" && !reporte ? absentDuTour(t, x.d || new Date()) : null;
+  if (reporte) {
+    if (estAdmin()) {
+      boutons.push('<button class="btn mini" data-action="tache-report-annuler" data-id="' + t.id +
+        '" data-date="' + jourIci + '">Annuler</button>');
+    }
+  } else if (et.statut === "afaire") {
     if (absent) {
       if (estAdmin()) {
         boutons.push('<button class="btn mini principal" data-action="tache-attribuer" data-id="' + t.id +
-          '" data-date="' + isoDate(x.d || new Date()) + '">Attribuer</button>');
+          '" data-date="' + jourIci + '">Attribuer</button>');
       }
     } else if (jeSuisAssigne || estAdmin()) {
-      boutons.push('<button class="btn mini principal" data-action="tache-fait" data-id="' + t.id + '">Fait</button>');
+      /* « Pas aujourd'hui, demain », en un geste. Un membre ordinaire ne peut
+         pas écrire les tâches : le bouton est pour les administrateurs. */
+      if (estAdmin() && !compact && !passe) {
+        boutons.push('<button class="btn mini icone" data-action="tache-reporter" data-id="' + t.id +
+          '" data-date="' + jourIci + '">⏭️</button>');
+      }
+      /* Le jour de la case part avec le bouton : cocher une tâche d'hier doit
+         remplir la case d'hier, et payer le bon jour (12/10/2026). */
+      boutons.push('<button class="btn mini principal" data-action="tache-fait" data-id="' + t.id +
+        '" data-date="' + jourIci + '">Fait</button>');
     }
   } else if (et.statut === "fait") {
     /* Le jour de la case, transmis aux boutons : une tâche faite mercredi se
@@ -790,7 +876,8 @@ function ligneTache(x, compact) {
     }
   }
 
-  let statutHtml = absent ? '<span class="etiquette chaud">à attribuer</span>' : "";
+  let statutHtml = reporte ? '<span class="etiquette">⏭️ reportée ' + esc(motDuReport(reporte)) + "</span>"
+    : absent ? '<span class="etiquette chaud">à attribuer</span>' : "";
   if (et.statut === "fait") statutHtml = '<span class="etiquette chaud">à valider</span>';
   else if (et.statut === "valide") statutHtml = '<span class="etiquette vert">✓ validée</span>';
 
@@ -804,7 +891,7 @@ function ligneTache(x, compact) {
   const quand = heureTache(t);
   /* Une tâche en retard de validation vient d'un autre jour : on le dit, sinon
      on valide sans savoir de quand il s'agit (28/09/2026). */
-  const autreJour = x.d && et.statut === "fait" ? quandFaite(t, x.d) : "";
+  const autreJour = x.d && (et.statut === "fait" || passe) ? quandFaite(t, x.d) : "";
   /* LE PRÉNOM SE TOUCHE (28/09/2026). Pour un administrateur, c'est le chemin
      le plus court vers « Qui s'en occupe ? » : un geste, et la tâche change de
      main pour CE passage — sans toucher à la tâche elle-même. Rien quand la
@@ -815,9 +902,12 @@ function ligneTache(x, compact) {
     ? '<button class="lien" style="font-size:inherit" data-action="tache-attribuer" data-id="' +
       esc(t.id) + '" data-date="' + isoDate(x.d || new Date()) + '">' + esc(nomQui) + "</button>"
     : esc(nomQui);
+  /* Un passage arrivé par un report : on dit d'où il vient, sinon la tâche
+     apparaît un jour où elle n'est pas prévue sans qu'on sache pourquoi. */
+  const origine = venu ? "⏭️ reportée " + motDOrigine(venu.de) : "";
   const sous = compact
     ? esc([quand, gain, libellePeriode(t.frequence)].filter(Boolean).join(" • "))
-    : [esc(autreJour), esc(quand), quiHtml, esc(gain)].filter(Boolean).join(" • ");
+    : [esc(origine), esc(autreJour), esc(quand), quiHtml, esc(gain)].filter(Boolean).join(" • ");
   /* Brique 3 : une tâche répartie dit pourquoi cette personne — et un parent
      la change d'un geste. */
   const rep = !compact && et.statut === "afaire" && !absent ? passageReparti(t, x.d || new Date()) : null;
@@ -916,7 +1006,14 @@ function blocSemaineTaches(seulementMoi) {
       const m = membre(!aFaire && x.et.parQui ? x.et.parQui : x.qui);
       /* Brique 3 : pourquoi l'appli a choisi cette personne, en bref. */
       const rep = aFaire && !passe ? passageReparti(x.t, d) : null;
+      /* Reportée : le jour de départ le dit, le jour d'arrivée aussi — sans
+         quoi la tâche apparaîtrait un jour non prévu, ou serait annoncée
+         « pas faite » alors qu'elle a été repoussée (01/10/2026). */
+      const parti = aFaire ? reporteLe(x.t, d) : "";
+      const arrive = aFaire && !parti ? reportArrivant(x.t, d) : null;
       const marque = x.et.statut === "valide" ? " ✓" : x.et.statut === "fait" ? " · à valider"
+        : parti ? " · reportée " + motDuReport(parti)
+        : arrive ? " · reportée " + motDOrigine(arrive.de)
         : semaine ? (rep && rep.jour === k ? " · jour conseillé" : " · cette semaine")
         : passe ? " · pas faite" : "";
       return nom + (m ? " — " + lien(esc(m.prenom)) : "") +
@@ -955,6 +1052,19 @@ function blocPlusTard(seulementMoi) {
   return '<div class="sous-titre"><h3>⏭️ Plus tard</h3></div><div class="carte">' + lignes.join("") + "</div>";
 }
 
+/* OUBLIÉES CES DERNIERS JOURS (12/10/2026) : ce que personne n'a coché les
+   trois jours d'avant. Rangé en bas, à côté de « Plus tard » : ce n'est ni une
+   alerte ni une liste de reproches, c'est un rattrapage — et il disparaît de
+   lui-même dès qu'il n'y a rien. */
+function blocOubliees(seulementMoi) {
+  const l = tachesOubliees().filter((x) => !seulementMoi || x.assigne === moi.id);
+  if (!l.length) return "";
+  return '<div class="sous-titre"><h3>🗓️ Oubliées ces derniers jours</h3></div>' +
+    '<p class="aide" style="margin:-.35rem 0 .55rem">Cochez celles qui ont bien été ' +
+    "faites : les points iront au jour concerné.</p>" +
+    '<div class="carte">' + l.map((x) => ligneTache(x, false)).join("") + "</div>";
+}
+
 Vues.taches = function () {
   const h = [];
   h.push('<div class="segments">' +
@@ -979,7 +1089,8 @@ Vues.taches = function () {
      sans aucune tâche — c'est justement là qu'on veut voir ce qui vient. */
   const semaine = blocSemaineTaches(ui.filtreTaches === "moi");
   const plusTard = blocPlusTard(ui.filtreTaches === "moi");
-  if (!toutes.length && !semaine && !plusTard) {
+  const oubliees = blocOubliees(ui.filtreTaches === "moi");
+  if (!toutes.length && !semaine && !plusTard && !oubliees) {
     h.push(rienDu("🧹", estAdmin()
       ? "Aucune tâche pour l'instant.<br>Appuyez sur <b>Nouvelle tâche</b>, juste au-dessus."
       : "Aucune tâche pour l'instant."));
@@ -1003,6 +1114,7 @@ Vues.taches = function () {
     h.push(rienDu("🎉", semaine ? "Rien d'autre à faire aujourd'hui."
       : !toutes.length ? "Rien à faire en ce moment."     // tout est « plus tard »
       : "Aucune tâche ne vous est attribuée en ce moment."));
+    h.push(oubliees);
     h.push(plusTard);
     return h.join("");
   }
@@ -1013,21 +1125,31 @@ Vues.taches = function () {
     const g = liste.filter((x) => x.t.frequence === f);
     if (!g.length) return;
     const faites = g.filter((x) => x.et.statut === "valide").length;
-    h.push('<div class="sous-titre"><h3>' + titre + "</h3><span class=\"etiquette\">" +
-      faites + "/" + g.length + " ✓</span></div>");
+    /* Une tâche reportée ne compte plus dans le total du jour : sinon « 1/3 »
+       laisserait croire qu'il en reste deux à faire. Et quand tout est
+       reporté, « 0/0 » ne voudrait rien dire : l'étiquette s'efface. */
+    const prevues = g.filter((x) => !x.reporte).length;
+    h.push('<div class="sous-titre"><h3>' + titre + "</h3>" +
+      (prevues ? '<span class="etiquette">' + faites + "/" + prevues + " ✓</span>" : "") +
+      "</div>");
     h.push('<div class="carte">' + g.map((x) => ligneTache(x, false)).join("") + "</div>");
   });
 
+  h.push(oubliees);
   h.push(plusTard);
   return h.join("");
 };
+
 
 /* ================================ COURSES ================================ */
 
 Vues.courses = function () {
   const h = [];
   const surStock = ui.ongletCourses === "stock";
-  const bas = stockSousMinimum().length;
+  /* Ce qui reste à NOTER, et non ce qui est sous le minimum : une fois
+     l'article porté sur une liste, la pastille n'a plus rien à réclamer
+     (06/10/2026). */
+  const bas = stockARacheter().length;
 
   h.push('<div class="segments">' +
     '<button class="' + (!surStock ? "on" : "") + '" data-action="courses-onglet" data-valeur="liste">' +
@@ -1082,10 +1204,17 @@ function vueListeCourses() {
       "pas dans les rappels de l'accueil.</div></div>");
   }
 
-  const bas = stockSousMinimum();
+  /* Ce qui reste à noter, toutes listes confondues : le bandeau réapparaissait
+     sur CHAQUE liste et faisait noter trois fois la même farine (06/10/2026).
+     Et il ne vise plus « cette liste » : la fenêtre demande laquelle. */
+  const bas = stockARacheter();
   if (bas.length && t.alerte) {
-    h.push('<div class="bandeau">🥫<div><b>' + pluriel(bas.length, "article", "articles") + " sous le minimum</b> dans votre réserve. " +
-      '<button class="lien" data-action="stock-racheter">Les ajouter à cette liste</button></div></div>');
+    h.push('<div class="bandeau">🥫<div><b>' + pluriel(bas.length, "article", "articles") +
+      " sous le minimum</b> dans votre réserve. " +
+      '<button class="lien" data-action="stock-racheter">' +
+      (bas.length > 1 ? "Les ajouter" : "L'ajouter") +
+      (listes.length > 1 ? " à une liste" : " à ma liste") +
+      "</button></div></div>");
   }
 
   /* L'ajout se pose juste au-dessus de la liste, comme dans le cahier de
@@ -1192,10 +1321,22 @@ function vueReserve() {
       "Le générateur de menus proposera en priorité les plats qui les utilisent.</div></div>");
   }
 
-  const bas = stockSousMinimum();
+  /* Depuis cet écran, « la liste de courses » ne voulait rien dire quand il y
+     en a plusieurs : on dit maintenant qu'on va choisir. Et ce qui est déjà
+     noté ne se réclame plus — il se rappelle, une ligne plus bas. */
+  const bas = stockARacheter();
+  const notes = stockSousMinimum().filter((s) => listesOuFigure(s.nom).length);
   if (bas.length) {
     h.push('<div class="bandeau">⚠️<div><b>À racheter : ' + esc(bas.map((s) => s.nom).join(", ")) + "</b>" +
-      '<br><button class="lien" data-action="stock-racheter">Ajouter à la liste de courses</button></div></div>');
+      '<br><button class="lien" data-action="stock-racheter">' +
+      (listesCourses().length > 1
+        ? "Choisir une liste et " + (bas.length > 1 ? "les ajouter" : "l'ajouter")
+        : "Ajouter à ma liste de courses") +
+      "</button></div></div>");
+  } else if (notes.length) {
+    h.push('<div class="bandeau info">📝<div>' +
+      esc(pluriel(notes.length, "article sous le minimum est déjà noté",
+        "articles sous le minimum sont déjà notés")) + " sur vos listes.</div></div>");
   } else {
     h.push('<div class="bandeau info">✅<div>Tout est au-dessus du minimum.</div></div>');
   }
@@ -1324,6 +1465,14 @@ Vues.menus = function () {
     '<button class="btn doux" data-action="menus-reprendre">📋 Reprendre une semaine</button>' +
     '<button class="btn doux" data-action="menus-afficher">🖨️ Afficher</button></div>');
 
+  /* VIDER LA SEMAINE (05/10/2026) : seulement quand il y a quelque chose à
+     effacer. Un bouton qui ne peut rien faire n'a rien à faire là, et celui-ci
+     disparaît de lui-même dès que la semaine est repartie de zéro. */
+  if (casesDeLaSemaine(ui.semaine).prevus.length) {
+    h.push('<div class="rangee-btn" style="margin-bottom:1rem">' +
+      '<button class="btn doux" data-action="menus-vider">🗑️ Vider la semaine</button></div>');
+  }
+
   /* Ce que donne la semaine, en un coup d'oeil : c'est le meilleur retour
      sur les nombres demandés au générateur. */
   const compo = compositionSemaine(ui.semaine);
@@ -1390,7 +1539,7 @@ function caseRepas(jour, moment, contenu) {
    liste « Changer le plat » d'un repas. */
 function filtresRecettesBase() {
   const s = infoSaison(saisonActuelle());
-  return [
+  const l = [
     ["saison", s.emoji + " De saison"],
     ["thermomix", "🍲 Thermomix"],
     ["monde", "🌍 Du monde"],
@@ -1403,6 +1552,13 @@ function filtresRecettesBase() {
     ["plat", "🍽️ Plats"],
     ["dessert", "🍰 Desserts"]
   ];
+  /* Le cahier des petits ne se propose qu'aux familles qui en ont un, et
+     seulement s'il a quelque chose à montrer (18/10/2026). */
+  if (typeof bebeVisible === "function" &&
+      etat.recettes.some((r) => estPourBebe(r) && bebeVisible(r))) {
+    l.push(["bebe", "👶 Pour bébé"]);
+  }
+  return l;
 }
 function nomFiltreRecette(v) {
   if (v.indexOf("sante:") === 0) {
@@ -1806,20 +1962,16 @@ Vues.admin = function () {
     return h.join("");
   }
 
-  /* Dix cartes, quatre écrans : sans raccourcis, changer un réglage demande
-     de faire défiler tout le reste à chaque fois. */
-  h.push('<div class="puces" style="margin-bottom:.9rem">' +
-    [["membres", "👨‍👩‍👧 Membres"], ["inviter", "✉️ Inviter"], ["taches", "🧹 Tâches"],
-     ["cadeaux", "🎁 Cadeaux"], ["recettes", "📖 Recettes"], ["reglages", "⚙️ Réglages"],
-     ["objectif", "🤝 Objectif"], ["onglets", "📱 Onglets"], ["donnees", "🔒 Données"]]
-      /* Un raccourci vers un bloc absent ne mène nulle part : les cadeaux
-         suivent les compteurs personnels, l'objectif le système de points. */
-      .filter(([a2]) => a2 === "cadeaux" ? pointsPersoActifs()
-        : a2 === "objectif" ? pointsActifs() : true)
-      .map(([a2, l]) => '<button class="puce" data-action="admin-aller" data-valeur="' + a2 + '">' +
-        l + "</button>").join("") + "</div>");
+  /* La rangée de raccourcis a disparu avec le défilement qu'elle servait à
+     éviter (18/10/2026) : les cartes repliées SONT le sommaire. Reste de quoi
+     tout ouvrir d'un coup, comme dans la réserve. */
+  const toutOuvert = (ui.adminOuverts || []).length >= 3;
+  h.push('<div class="rangee-btn" style="margin-bottom:.9rem">' +
+    '<button class="btn doux" data-action="admin-tout-replier" data-valeur="' +
+    (toutOuvert ? "replier" : "ouvrir") + '">' +
+    (toutOuvert ? "▸ Tout replier" : "▾ Tout ouvrir") + "</button></div>");
 
-  h.push(blocAncre("membres", "👨‍👩‍👧 Membres de la famille",
+  h.push(carteAdmin("membres", "👨‍👩‍👧 Membres de la famille",
     etat.membres.map((m) =>
       '<div class="ligne">' + avatarDe(m) +
       '<div class="ligne-corps"><b>' + esc(m.prenom) + "</b><small>" +
@@ -1834,7 +1986,7 @@ Vues.admin = function () {
       '<button class="btn mini icone" data-action="membre-editer" data-id="' + m.id + '">✏️</button></div>').join(""),
     "Ajouter", "membre-nouveau"));
 
-  h.push(blocAncre("inviter", "✉️ Inviter quelqu'un",
+  h.push(carteAdmin("inviter", "✉️ Inviter quelqu'un",
     '<p class="aide">Pour ajouter une personne — ou un nouveau téléphone pour quelqu\'un qui est ' +
     "déjà dans la famille — créez une invitation. C'est un lien <b>à usage unique</b> qui expire " +
     "au bout de quelques jours.</p>" +
@@ -1843,7 +1995,7 @@ Vues.admin = function () {
     "qui sont personnels — un par membre.</p>" +
     '<button class="btn plein principal" data-action="inviter" style="margin-top:.8rem">Créer une invitation</button>'));
 
-  h.push(bloc("❓ Comment ça marche",
+  h.push(carteAdmin("aide", "❓ Comment ça marche",
     '<div class="ligne"><span class="etape">1</span><div class="ligne-corps">' +
     "<b>Vous créez la famille</b><small>C'est fait : vous en êtes administratrice.</small></div></div>" +
     '<div class="ligne"><span class="etape">2</span><div class="ligne-corps">' +
@@ -1855,7 +2007,7 @@ Vues.admin = function () {
     '<button class="lien" data-action="revoir-conseils" style="margin-top:.7rem">' +
     "Revoir les premiers pas sur l'accueil</button>"));
 
-  h.push(bloc("📱 Appareils autorisés",
+  h.push(carteAdmin("appareils", "📱 Appareils autorisés",
     '<p class="aide">' + ((etat.membresUid || []).length > 1
       ? (etat.membresUid || []).length + " appareils peuvent"
       : (etat.membresUid || []).length + " appareil peut") + " ouvrir cette famille. " +
@@ -1866,7 +2018,7 @@ Vues.admin = function () {
     '<p class="aide" style="margin-top:.5rem">💡 Prévoyez <b>deux administrateurs</b> : si le seul ' +
     "administrateur perd son accès, plus personne ne peut valider les tâches.</p>"));
 
-  h.push(blocAncre("taches", "🧹 Tâches (" + etat.taches.length + ")",
+  h.push(carteAdmin("taches", "🧹 Tâches (" + etat.taches.length + ")",
     etat.taches.length
       ? etat.taches.map((t) =>
         '<div class="ligne"><span style="font-size:1.2rem">' + esc(t.emoji || "🧹") + "</span>" +
@@ -1885,7 +2037,7 @@ Vues.admin = function () {
   /* Renouveler la liste proposée par l'application : le bouton n'apparaît que
      s'il y a vraiment quelque chose à changer. */
   const majCadeaux = cadeauxAremplacer();
-  if (pointsPersoActifs()) h.push(blocAncre("cadeaux", "🎁 Cadeaux (" + etat.cadeaux.length + ")",
+  if (pointsPersoActifs()) h.push(carteAdmin("cadeaux", "🎁 Cadeaux (" + etat.cadeaux.length + ")",
     (etat.cadeaux.length
       ? etat.cadeaux.map((c) =>
         '<div class="ligne"><span style="font-size:1.2rem">' + esc(c.emoji || "🎁") + "</span>" +
@@ -1903,7 +2055,7 @@ Vues.admin = function () {
 
   const aCompleter = etat.recettes.filter((r) => r.saisons === undefined).length;
   const nouvelles = recettesManquantes().length;
-  h.push(blocAncre("recettes", "📖 Recettes (" + etat.recettes.length + ")",
+  h.push(carteAdmin("recettes", "📖 Recettes (" + etat.recettes.length + ")",
     '<p class="aide">La bibliothèque de plats sert au générateur de menus.</p>' +
     (aCompleter
       ? '<div class="bandeau" style="margin-top:.6rem">🔄<div><b>' + pluriel(aCompleter, "recette", "recettes") +
@@ -1918,7 +2070,7 @@ Vues.admin = function () {
     '<button class="btn plein" data-action="recettes-maj" style="margin-top:.5rem">🔄 Mettre à jour les recettes fournies</button>'));
 
   const g = reglagesFamille();
-  h.push(blocAncre("reglages", "⚙️ Réglages de la famille",
+  h.push(carteAdmin("reglages", "⚙️ Réglages de la famille",
     '<div class="ligne"><span style="font-size:1.3rem">🍽️</span>' +
     '<div class="ligne-corps"><b>' + g.convives + " personne" + (g.convives > 1 ? "s" : "") +
     " à table</b><small>Les quantités des recettes sont ajustées à ce nombre.</small></div></div>" +
@@ -1959,7 +2111,7 @@ Vues.admin = function () {
     '<button class="btn plein doux" data-action="admin-reglages" style="margin-top:.7rem">Modifier</button>'));
 
   const ob = objectifFamille();
-  if (pointsActifs()) h.push(blocAncre("objectif", "🤝 Objectif commun",
+  if (pointsActifs()) h.push(carteAdmin("objectif", "🤝 Objectif commun",
     '<p class="aide">Le classement met chacun contre les autres ; l’objectif ' +
     "commun met toute la maison du même côté. Facultatif.</p>" +
     (ob.actif
@@ -1982,7 +2134,7 @@ Vues.admin = function () {
   const caches = ongletsMasques();
   /* Les rayons : ceux de l'application, et ceux que la famille ajoute. */
   const perso = rayonsPerso();
-  h.push(blocAncre("rayons", "🗂️ Rayons (" + rayonsTous().length + ")",
+  h.push(carteAdmin("rayons", "🗂️ Rayons (" + rayonsTous().length + ")",
     '<p class="aide">Ils rangent la réserve et la liste de courses. Chacun appartient ' +
     "à un côté : 🥫 alimentaire ou 🧴 maison. Seuls « À catégoriser » et « Autre » 🗂️ " +
     "apparaissent des deux côtés.</p>" +
@@ -2002,7 +2154,7 @@ Vues.admin = function () {
       : '<p class="aide" style="margin-top:.7rem">Vous n’avez ajouté aucun rayon.</p>'),
     "Ajouter", "rayon-nouveau"));
 
-  h.push(blocAncre("onglets", "📱 Onglets visibles",
+  h.push(carteAdmin("onglets", "📱 La barre du bas",
     '<p class="aide">Ce que la famille voit dans la barre du bas. Masquer un onglet ' +
     "ne supprime rien : le contenu est simplement rangé hors de vue.</p>" +
     '<div class="puces" style="margin-top:.7rem">' +
@@ -2016,7 +2168,7 @@ Vues.admin = function () {
     '<button class="btn plein doux" data-action="admin-onglets" style="margin-top:.7rem">Choisir les onglets</button>'));
   /* Les deux droits du RGPD qu'on ne peut pas se contenter d'écrire sur une
      page : récupérer ses données, et les faire effacer. */
-  h.push(blocAncre("donnees", "🔒 Vos données",
+  h.push(carteAdmin("donnees", "🔒 Vos données",
     '<p class="aide">Ce que la loi vous garantit, à portée de main : récupérer tout ' +
     "ce que MaTribu garde sur votre famille, ou tout effacer pour de bon.</p>" +
     '<button class="btn plein doux" data-action="admin-exporter" style="margin-top:.7rem">' +
@@ -2685,7 +2837,7 @@ const Connexion = {
         }, verrou)];
         donnees.appareils = { [Store.uid]: moiId };
         donnees.appareilsInfos = { [Store.uid]: infoAppareil("creation") };
-        donnees.recettes = (window.RECETTES_DEPART || [])
+        donnees.recettes = recettesFournies()
           .map((r) => Object.assign({ id: id(), origine: "depart" }, r));
         donnees.taches = tachesDeDepart(moiId);
         donnees.cadeaux = cadeauxDeDepart();
