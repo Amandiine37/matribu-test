@@ -1,0 +1,997 @@
+/* =========================================================================
+   TRIBU — regles de securite Firebase
+   =========================================================================
+   A copier-coller dans : console Firebase > Firestore Database > Regles,
+   puis cliquer sur PUBLIER.
+
+   Ce que ces regles garantissent, meme si quelqu'un bidouille l'application
+   depuis son telephone :
+
+   1. Une famille n'est lisible que par les APPAREILS inscrits dans sa liste
+      `membresUid`. Connaitre le nom ou le repere de la famille ne suffit pas.
+   2. On entre dans une famille uniquement avec un JETON D'INVITATION valide,
+      non expire et non utilise. Et on ne peut alors s'ajouter que soi-meme.
+   3. Un membre ordinaire ne peut modifier que les rubriques partagees
+      (courses, repas, rappels, recettes, demandes de cadeaux). Les membres,
+      les taches, les cadeaux et les baremes sont reserves aux administrateurs.
+   4. Une tache ne peut etre passee en "valide" que par un administrateur.
+   5. LES POINTS (taches ET repas cuisines) : chaque ligne du journal est
+      creee par un administrateur,
+      ne peut JAMAIS etre modifiee ni supprimee ensuite (seule exception : la
+      suppression complete de la famille, voir plus bas), et son montant doit
+      correspondre exactement au bareme de la tache ou au prix du cadeau.
+      Personne ne peut donc s'attribuer de points.
+   ========================================================================= */
+
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ---------- petites fonctions utilitaires ----------
+
+    function famille(fid) {
+      return get(/databases/$(database)/documents/familles/$(fid)).data;
+    }
+    function connecte() {
+      return request.auth != null;
+    }
+    // Session d'APPAREIL : anonyme, sans adresse. Seule elle peut devenir
+    // membre d'une famille par elle-meme (creer, entrer par invitation). La
+    // session d'un compte adulte (lien magique) n'est membre de rien : elle
+    // rattache UN AUTRE identifiant (MODELE-COMPTES-APPAREILS.md, invariant I5).
+    function sessionAppareil() {
+      return connecte() && request.auth.token.get('email', null) == null;
+    }
+    function estMembre(fid) {
+      return connecte() && request.auth.uid in famille(fid).membresUid;
+    }
+    // Un administrateur est d'abord un MEMBRE : un identifiant present dans
+    // adminsUid mais absent de membresUid (donc retire) n'a aucun droit
+    // (audit du 13/09/2026).
+    function estAdmin(fid) {
+      return connecte()
+        && request.auth.uid in famille(fid).membresUid
+        && request.auth.uid in famille(fid).adminsUid;
+    }
+    function invitation(jeton) {
+      return get(/databases/$(database)/documents/invitations/$(jeton)).data;
+    }
+    // La demande de rattachement par e-mail qui porte ce jeton.
+    // Voir match /demandesCompte, plus bas.
+    function demande(jeton) {
+      return get(/databases/$(database)/documents/demandesCompte/$(jeton)).data;
+    }
+    /* Une invitation utilisable pour entrer dans la famille `fid`.
+
+       UNE SEULE forme est acceptee depuis le 14/09/2026 : RESERVEE PAR MOI.
+       L'appareil pose d'abord son nom sur le jeton, puis entre. C'est ce qui
+       rend l'invitation reellement a usage unique : la reservation porte sur
+       un seul document, Firestore la rend atomique, et deux appareils
+       simultanes ne peuvent pas la gagner tous les deux.
+
+       LA FENETRE DE TRANSITION EST REFERMEE. Jusqu'ici un jeton ENCORE LIBRE
+       etait aussi accepte : l'ancienne application (0.48) entrait d'abord et
+       brulait le jeton ensuite. Consequence, le meme code servait a plusieurs
+       appareils, et un lien d'invitation oublie dans une conversation restait
+       bon pour le premier venu.
+
+       Pourquoi c'est sans danger maintenant : pour ouvrir une invitation, un
+       appareil doit charger l'application depuis le reseau — il obtient donc
+       sa derniere version, qui reserve avant d'entrer. Et une entree qui
+       echoue juste apres la reservation se reprend : la reservation est
+       signee, seul son proprietaire peut la rejouer. */
+    // L'adresse e-mail prouvee par un lien magique : comparee en minuscules
+    // et VERIFIEE. Une adresse simplement saisie, ou une session anonyme, ne
+    // suffisent jamais (MODELE-COMPTES-APPAREILS.md, invariant I7).
+    function adresseProuvee(adresse) {
+      return connecte()
+        && request.auth.token.get('email', null) is string
+        && request.auth.token.email.lower() == adresse
+        && request.auth.token.get('email_verified', false) == true;
+    }
+
+    function invitationValide(fid, jeton) {
+      return jeton is string
+        && exists(/databases/$(database)/documents/invitations/$(jeton))
+        && invitation(jeton).famille == fid
+        && invitation(jeton).expireLe > request.time.toMillis()
+        // Reservee, et reservee PAR MOI.
+        && invitation(jeton).utilisee == true
+        && invitation(jeton).get('utiliseePar', '') == request.auth.uid;
+    }
+
+    // ---------- annuaire des reperes de famille ----------
+    // Ne contient qu'une date. Savoir qu'un repere existe n'ouvre AUCUN acces :
+    // cela sert seulement a dire « ce nom est deja pris » avant de creer, au
+    // lieu de le deviner a partir d'un refus.
+
+    match /reperes/{code} {
+      allow get: if connecte();
+      allow list: if false;
+      // Création bornée (11/09/2026). Seul un MEMBRE de la famille qui porte ce
+      // code peut créer son repère : la famille doit donc déjà exister, et on ne
+      // peut plus « réserver » des repères au hasard ni en créer pour les autres.
+      // Les deux versions de l'appli respectent cet ordre : famille d'abord,
+      // repère ensuite (création), ou repère rattrapé par un membre à
+      // l'ouverture (verifierRepere). Le document ne contient qu'une date :
+      // l'heure du serveur en 0.50, un nombre de millisecondes en 0.48.
+      // Format strict du code : EN ATTENTE, comme pour la création de famille
+      // (MODELE-COMPTES-APPAREILS.md, section 7) — la 0.48 laisse taper le repère.
+      allow create: if connecte()
+                    && code.size() <= 24
+                    // && code.matches('^MAISON-[A-HJ-NP-Z2-9]{6}$')
+                    && estMembre(code)
+                    && request.resource.data.keys().hasOnly(['creeLe'])
+                    && ((request.resource.data.creeLe is timestamp
+                         && request.resource.data.creeLe == request.time)
+                        || (request.resource.data.creeLe is int
+                            && request.resource.data.creeLe > request.time.toMillis() - 86400000
+                            && request.resource.data.creeLe < request.time.toMillis() + 86400000));
+      allow update: if false;
+      // Efface avec la famille, et SEULEMENT pendant sa suppression (drapeau
+      // pose) : ainsi rien ne subsiste d'une famille supprimee. Le repere
+      // porte le meme code que le document de la famille, d'ou estAdmin(code).
+      // Il doit partir AVANT le document de la famille : c'est lui qui prouve
+      // qu'on en est administrateur.
+      allow delete: if connecte() && estAdmin(code)
+                    && famille(code).get('suppression', null) != null;
+    }
+
+    // ---------- programme « Familles Fondatrices » (lancement) ----------
+    /* Les 100 premieres tribus qui utilisent vraiment l'application recoivent
+       un numero permanent.
+
+       LE NUMERO EST L'IDENTIFIANT DU DOCUMENT. Firestore refuse de creer un
+       document qui existe deja : deux tribus ne peuvent donc pas obtenir le
+       meme numero, meme en reservant a la meme seconde. C'est ce qui rend le
+       numero unique SANS serveur ni Cloud Function.
+
+       Ce que ces regles garantissent :
+       - le numero est unique, et compris entre 1 et 110 : les 100 places de
+         Famille Fondatrice, plus les pionnieres, qui n'y comptent pas
+         (19/09/2026 ; c'est l'application qui compte les fondatrices) ;
+       - seule une tribu reserve POUR ELLE-MEME, par un de ses appareils
+         administrateurs ;
+       - une tribu ne detient qu'un numero a la fois (preuve immuable
+         famillesFondatrices/{tribu}, creee dans la meme ecriture) ;
+       - aucune validation dans les 24 h qui suivent la reservation, sauf
+         pour une vraie pionniere (15/09/2026, voir plus bas) ;
+       - une place reservee non validee retourne au pot au bout de 30 jours ;
+       - une place validee ne se modifie plus.
+
+       Ce qu'elles NE garantissent PAS : les criteres d'usage (2 membres,
+       5 taches validees, 2 jours distincts). Les regles n'ont pas de boucle
+       et ne savent pas recompter un historique : c'est l'application qui les
+       mesure. Quelqu'un qui bidouillerait son telephone pourrait donc se
+       valider trop tot — mais pas avant 24 h — sans pouvoir pour autant ni
+       voler le numero d'une autre tribu, ni en prendre deux. La liste se
+       relit dans la console. */
+
+    match /fondateurs/{numero} {
+
+      function placeConforme() {
+        let d = request.resource.data;
+        return d.keys().hasOnly(['famille', 'genre', 'statut', 'reserveeLe', 'valideeLe'])
+          && d.famille is string && d.famille.size() > 0 && d.famille.size() <= 40
+          && (d.genre == 'fondatrice' || d.genre == 'pionniere');
+      }
+
+      /* UNE FAMILLE <-> UN NUMERO, garanti par le serveur (audit du
+         13/09/2026). Le champ `fondatrice` du document de la famille est
+         modifiable par son administrateur : il ne prouve rien. La preuve est
+         le document famillesFondatrices/{tribu}, cree UNE fois, dans la MEME
+         ecriture atomique que fondateurs/{numero} : chacun exige l'autre
+         (getAfter lit l'etat tel qu'il sera si l'ecriture entiere passe). */
+      function preuveDeLaFamille(fid) {
+        return getAfter(/databases/$(database)/documents/famillesFondatrices/$(fid))
+                 .data.numero == int(numero);
+      }
+
+      /* 30 JOURS, ET NON 7 (28/09/2026). Voir PROGRAMME.jours dans app.js :
+         les deux chiffres doivent rester d'accord. Passer de 7 a 30 ne fait
+         qu'assouplir — une application encore a l'ancienne version continue
+         donc de fonctionner apres la republication de ces regles. */
+      function expiree() {
+        return resource.data.statut == 'reservee'
+          && request.time > resource.data.reserveeLe + duration.value(30, 'd');
+      }
+
+      /* GARDE-FOUS DE LA VALIDATION (15/09/2026 — option B, choisie par
+         Amandine : securiser sans alourdir, pour une appli familiale).
+
+         Les criteres (2 membres, 5 validations, 2 jours) sont comptes par
+         l'application : le serveur ne sait pas recompter un historique. Un
+         telephone bidouille pouvait donc valider sa place TOUT DE SUITE — ou se
+         declarer « pionniere », validee d'emblee, sans aucun critere.
+
+         1. Plus de validation avant 24 h apres la reservation (horloge du
+            serveur). Les criteres demandent deja deux jours differents : une
+            famille honnete ne s'en apercoit pas, et l'application reessaie en
+            silence quand le serveur refuse.
+         2. Seule une VRAIE pionniere echappe a ce delai : une tribu dont le
+            repere (reperes/{code} : date posee par le serveur, jamais
+            modifiable) date d'avant le 13/09/2026. Format 0.50 : horodatage.
+            Format 0.48 : millisecondes — 1789257600000 = 13/09/2026 00:00 UTC,
+            le meme instant que PROGRAMME.depuis dans app.js.
+            Une ancienne tribu dont le repere a ete pose plus tard n'est jamais
+            bloquee : elle attend simplement 24 h, comme tout le monde.
+         Reste possible, et assume : un tricheur patient qui attend 24 h. Le
+         dernier mot reste a Amandine, qui peut retirer une place dans la
+         console. */
+      function pionniereAvantLeProgramme(place) {
+        let chemin = /databases/$(database)/documents/reperes/$(place.famille);
+        return place.genre == 'pionniere'
+          && exists(chemin)
+          && ((get(chemin).data.creeLe is timestamp
+               && get(chemin).data.creeLe < timestamp.date(2026, 9, 13))
+              || (get(chemin).data.creeLe is int
+                  && get(chemin).data.creeLe < 1789257600000));
+      }
+
+      // Chacun peut compter les places restantes : la liste tient en 110
+      // documents et ne contient que des reperes de tribu, qui n'ouvrent
+      // aucun acces (meme raisonnement que pour les recettes partagees).
+      allow get: if connecte();
+      allow list: if connecte() && request.query.limit <= 110;
+
+      allow create: if sessionAppareil()
+                    && numero.size() <= 3
+                    && numero.matches('^[1-9][0-9]*$')
+                    && int(numero) <= 110
+                    && placeConforme()
+                    && request.resource.data.statut == 'reservee'
+                    && request.resource.data.reserveeLe == request.time
+                    && request.resource.data.get('valideeLe', null) == null
+                    && estAdmin(request.resource.data.famille)
+                    && preuveDeLaFamille(request.resource.data.famille);
+
+      // Validation : par SA tribu, dans les 30 jours, une seule fois. Ni le
+      // repere ni la date de reservation ne bougent.
+      // Et PAS AVANT 24 H apres la reservation — sauf une vraie pionniere
+      // (15/09/2026, voir pionniereAvantLeProgramme ci-dessus).
+      allow update: if sessionAppareil()
+                    && placeConforme()
+                    && estAdmin(resource.data.famille)
+                    && request.resource.data.famille == resource.data.famille
+                    && request.resource.data.genre == resource.data.genre
+                    && request.resource.data.reserveeLe == resource.data.reserveeLe
+                    && resource.data.statut == 'reservee'
+                    && request.resource.data.statut == 'validee'
+                    && request.resource.data.valideeLe == request.time
+                    && request.time < resource.data.reserveeLe + duration.value(30, 'd')
+                    && (pionniereAvantLeProgramme(resource.data)
+                        || request.time > resource.data.reserveeLe + duration.value(24, 'h'));
+
+      /* La place repart au pot. Passe 30 jours sans validation, n'importe
+         quelle tribu peut la liberer : c'est ainsi qu'elle redevient
+         disponible sans serveur pour faire le menage. Sa propre tribu peut
+         aussi y renoncer, et la place part avec la tribu supprimee. */
+      allow delete: if (connecte() && expiree())
+                    || (sessionAppareil() && estAdmin(resource.data.famille)
+                        && (resource.data.statut == 'reservee'
+                            || famille(resource.data.famille).get('suppression', null) != null));
+    }
+
+    // ---------- preuve fondatrice : une par famille, immuable ----------
+    /* Voir /fondateurs : ce document est l'autre moitie de la garantie. Il ne
+       se cree que dans la meme ecriture que la place qu'il annonce, ne se
+       modifie jamais, et ne s'efface que quand la place n'existe plus
+       (expiree, rendue) ou avec la tribu — pour qu'une famille dont la place
+       a expire puisse retenter, sans jamais en tenir deux a la fois. */
+    match /famillesFondatrices/{fid} {
+      allow get: if estMembre(fid);
+      allow list: if false;
+      allow create: if sessionAppareil()
+                    && estAdmin(fid)
+                    && request.resource.data.keys().hasOnly(['numero', 'genre'])
+                    && request.resource.data.numero is int
+                    && request.resource.data.numero >= 1
+                    && request.resource.data.numero <= 110
+                    && (request.resource.data.genre == 'fondatrice'
+                        || request.resource.data.genre == 'pionniere')
+                    && getAfter(/databases/$(database)/documents/fondateurs/$(string(request.resource.data.numero)))
+                         .data.famille == fid;
+      allow update: if false;
+      allow delete: if sessionAppareil() && estAdmin(fid)
+                    && (famille(fid).get('suppression', null) != null
+                        || !exists(/databases/$(database)/documents/fondateurs/$(string(resource.data.numero)))
+                        || get(/databases/$(database)/documents/fondateurs/$(string(resource.data.numero)))
+                             .data.famille != fid);
+    }
+
+    // ---------- comptes adultes (identite durable, lien magique) ----------
+    // Ranges A PART de la famille : un telephone neuf doit pouvoir decouvrir
+    // sa famille avec la seule preuve de son adresse, sans pouvoir la lire.
+    // Le document porte l'adresse en minuscules comme identifiant.
+    // ---------- demandes de rattachement par e-mail ----------
+    //
+    // POURQUOI CETTE COLLECTION EXISTE (14/09/2026).
+    //
+    // Avant, un administrateur ecrivait directement comptes/{adresse} : il
+    // suffisait donc d'etre administrateur de N'IMPORTE QUELLE tribu pour
+    // accaparer l'adresse de quelqu'un d'autre, et la famille legitime ne
+    // pouvait plus s'en servir. Une adresse que PERSONNE n'a verifiee ne peut
+    // pas servir d'identifiant : c'est le fond du probleme.
+    //
+    // Desormais un administrateur ne fait que DEMANDER. Ce document porte un
+    // identifiant tire au sort : le creer ne reserve aucune adresse, et deux
+    // tribus peuvent tres bien demander la meme sans se gener. C'est la
+    // personne elle-meme qui, en ouvrant le lien recu A CETTE ADRESSE, cree
+    // le rattachement (voir /comptes juste en dessous).
+    match /demandesCompte/{jeton} {
+      function champsDemande() {
+        let d = request.resource.data;
+        return d.keys().hasOnly(['famille', 'membre', 'admin', 'adresse', 'creeeLe', 'expireLe'])
+          && d.keys().hasAll(['famille', 'membre', 'admin', 'adresse', 'expireLe'])
+          && d.famille is string
+          && d.membre is string && d.membre.size() > 0 && d.membre.size() <= 64
+          && d.admin is bool
+          && d.adresse is string && d.adresse == d.adresse.lower()
+          && d.adresse.size() > 0 && d.adresse.size() <= 254
+          && d.expireLe is int
+          && d.expireLe > request.time.toMillis()
+          && d.expireLe < request.time.toMillis() + 2678400000;   // 31 jours au plus
+      }
+      // Le jeton EST le secret, comme pour une invitation : qui l'a recu par
+      // e-mail peut lire la demande, pour savoir quelle tribu l'invite et
+      // sous quel profil. Elle ne contient rien d'autre — ni code, ni
+      // empreinte, ni contenu de la tribu.
+      allow get: if connecte();
+      // Un administrateur retrouve les demandes de SA famille. Et la personne
+      // qui PROUVE une adresse retrouve celles qui visent cette adresse
+      // (15/09/2026) : « Me connecter par e-mail » marche alors des la
+      // premiere fois, sans attendre le lien de l'administrateur — avant, elle
+      // se heurtait a « aucune famille n'a enregistre cette adresse » alors
+      // que la demande existait. La requete DOIT filtrer sur l'adresse, et elle
+      // n'apprend que la tribu et le profil qui l'attendent : exactement ce
+      // que le lien de l'administrateur lui aurait donne.
+      allow list: if (connecte() && estAdmin(resource.data.famille))
+                  || adresseProuvee(resource.data.adresse);
+      allow create: if connecte()
+                    && estAdmin(request.resource.data.famille)
+                    && champsDemande();
+      // Une demande ne se modifie jamais : on en cree une autre.
+      allow update: if false;
+      allow delete: if connecte() && estAdmin(resource.data.famille);
+    }
+
+    match /comptes/{adresse} {
+      function champsCompte() {
+        return request.resource.data.keys()
+                 .hasOnly(['famille', 'membre', 'admin', 'ajouteLe', 'ajoutePar', 'demande'])
+          && request.resource.data.membre is string
+          && request.resource.data.admin is bool;
+      }
+      // La demande qui autorise ce rattachement : elle doit viser CETTE
+      // adresse, cette tribu, ce profil, ces droits — et ne pas avoir expire.
+      // `exists` passe AVANT `demande()` : lire un document absent ferait
+      // echouer la regle au lieu de repondre non.
+      function demandeAccorde() {
+        let j = request.resource.data.get('demande', '');
+        return j is string && j.size() > 0
+          && exists(/databases/$(database)/documents/demandesCompte/$(j))
+          && demande(j).adresse == adresse
+          && demande(j).famille == request.resource.data.famille
+          && demande(j).membre == request.resource.data.membre
+          && demande(j).admin == request.resource.data.admin
+          && demande(j).expireLe > request.time.toMillis();
+      }
+      // Lu uniquement par la personne qui prouve cette adresse.
+      allow get: if adresseProuvee(adresse);
+      // Un administrateur retrouve les comptes de SA famille (requete filtree).
+      allow list: if connecte() && estAdmin(resource.data.famille);
+      // CREE PAR LA PERSONNE ELLE-MEME, jamais par un administrateur : c'est
+      // exactement ce qui rend l'accaparement d'adresse impossible. Il faut
+      // avoir prouve l'adresse (lien recu dessus) ET presenter une demande
+      // qui correspond mot pour mot.
+      allow create: if adresseProuvee(adresse)
+                    && adresse == adresse.lower()
+                    && champsCompte()
+                    && request.resource.data.famille is string
+                    && demandeAccorde();
+      // Le compte ne change JAMAIS de famille : sinon l'admin d'une famille A
+      // detournerait le rattachement d'un parent de la famille B vers A.
+      allow update: if connecte()
+                    && estAdmin(resource.data.famille)
+                    && request.resource.data.famille == resource.data.famille
+                    && champsCompte();
+      // Par un admin de la famille, ou par le titulaire lui-meme : son issue
+      // si son adresse a ete enregistree ailleurs.
+      allow delete: if (connecte() && estAdmin(resource.data.famille))
+                    || adresseProuvee(adresse);
+    }
+
+    // ---------- catalogue de recettes partagees entre familles ----------
+    // Lisible par toutes les familles connectees. On ne peut publier qu'une
+    // fiche portant le code de SA propre famille, et on ne peut retirer que
+    // ses propres publications.
+
+    match /recettesPartagees/{fiche} {
+      allow read: if connecte();
+
+      // Schéma figé (11/09/2026) : exactement les champs de Recettes.ficheDe()
+      // (app.js, identiques en 0.48 et 0.50), chacun typé et borné. Les
+      // listes sont bornées en nombre ; leur contenu ligne à ligne ne peut pas
+      // être vérifié par les règles (elles n'ont pas de boucle) : la limite de
+      // 1 Mo d'un document Firestore reste alors le plafond.
+      function ficheConforme() {
+        let d = request.resource.data;
+        return d.keys().hasOnly(['id', 'nom', 'emoji', 'type', 'vegetarien', 'rapide', 'saisons',
+                                 'etapes', 'lien', 'ingredients', 'parFamille', 'familleRef',
+                                 'publieLe', 'version'])
+          && d.keys().hasAll(['id', 'nom', 'ingredients', 'parFamille', 'familleRef'])
+          && d.id == fiche
+          && d.nom is string && d.nom.size() > 0 && d.nom.size() <= 80
+          && d.ingredients is list && d.ingredients.size() <= 40
+          && d.parFamille is string && d.parFamille.size() <= 60
+          && d.familleRef is string
+          && d.get('emoji', '') is string && d.get('emoji', '').size() <= 16
+          && d.get('type', '') is string && d.get('type', '').size() <= 20
+          && d.get('vegetarien', false) is bool
+          && d.get('rapide', false) is bool
+          && d.get('saisons', []) is list && d.get('saisons', []).size() <= 4
+          && d.get('etapes', []) is list && d.get('etapes', []).size() <= 20
+          && d.get('lien', '') is string && d.get('lien', '').size() <= 500
+          && d.get('publieLe', '') is string && d.get('publieLe', '').size() <= 40
+          && d.get('version', '') is string && d.get('version', '').size() <= 20;
+      }
+
+      // familleRef vérifié comme texte AVANT de chercher la famille : un
+      // mauvais type est refusé par la règle, pas par une erreur de lecture.
+      allow create: if connecte()
+                    && request.resource.data.familleRef is string
+                    && estMembre(request.resource.data.familleRef)
+                    && ficheConforme();
+
+      // une fiche publiee ne se modifie pas : on la retire et on republie
+      allow update: if false;
+      allow delete: if connecte()
+                    && resource.data.familleRef is string
+                    && estMembre(resource.data.familleRef);
+    }
+
+    // ---------- retours des utilisateurs (bugs, idees) ----------
+    // Chacun peut en deposer un, personne ne peut les relire depuis l'appli :
+    // ils se consultent dans la console Firebase.
+
+    match /retours/{ligne} {
+      // Personne ne les relit depuis l'application. Un administrateur peut
+      // seulement RETROUVER ceux de SA famille (requete filtree obligatoire)
+      // pour les effacer avec elle : sans cela, prenom, nom et repere de la
+      // famille survivaient a sa suppression (revue du 12/09/2026).
+      allow get: if false;
+      allow list: if connecte() && estAdmin(resource.data.famille);
+      // Schéma figé (11/09/2026) : exactement les champs qu'envoient la 0.48 et
+      // la 0.50 (formulaires.js, « Signaler ou proposer »), chacun avec son type
+      // et une longueur maximale. Aucun autre champ, aucune structure imprévue.
+      function champsRetour() {
+        let d = request.resource.data;
+        return d.keys().hasOnly(['id', 'genre', 'titre', 'detail', 'deQui', 'famille',
+                                 'nomFamille', 'version', 'appareil', 'envoyeLe', 'envoyeA'])
+          // Instant d'envoi en millisecondes (0.50) : c'est lui que les regles
+          // comparent a l'heure du serveur pour l'effacement au bout de 12 mois.
+          // Absent en 0.48 : un tel retour ne part qu'avec la tribu.
+          && d.get('envoyeA', 0) is int
+          && d.keys().hasAll(['id', 'titre', 'detail', 'envoyeLe'])
+          && d.id == ligne
+          // non vides : le formulaire les exige (0.48 et 0.50), l'appli retire les espaces
+          && d.titre is string && d.titre.size() > 0 && d.titre.size() <= 200
+          && d.detail is string && d.detail.size() > 0 && d.detail.size() <= 2000
+          && d.envoyeLe is string && d.envoyeLe.size() <= 40
+          && d.get('genre', '') is string && d.get('genre', '').size() <= 20
+          && d.get('deQui', '') is string && d.get('deQui', '').size() <= 60
+          && d.get('famille', '') is string && d.get('famille', '').size() <= 40
+          && d.get('nomFamille', '') is string && d.get('nomFamille', '').size() <= 80
+          && d.get('version', '') is string && d.get('version', '').size() <= 20
+          && d.get('appareil', '') is string && d.get('appareil', '').size() <= 200;
+      }
+      // Reserve aux MEMBRES de la famille indiquee (revue du 12/09/2026).
+      // Avant, toute session connectee pouvait ecrire — et une session
+      // anonyme se cree en ouvrant la page : de quoi epuiser les 20 000
+      // ecritures par jour du plan gratuit et arreter l'application pour
+      // tout le monde. Les deux versions de l'application (0.48 et 0.50)
+      // n'envoient un retour que depuis l'interieur d'une famille, avec son
+      // repere : cette condition ne casse rien.
+      allow create: if connecte()
+                    && champsRetour()
+                    && request.resource.data.famille is string
+                    && estMembre(request.resource.data.famille);
+      allow update: if false;
+      // Efface avec la famille pendant sa suppression — ou, par un administrateur
+      // de la tribu, quand le retour a PLUS DE 12 MOIS (promesse de la page de
+      // confidentialite, tenue ici : un retour recent ne peut pas etre efface,
+      // meme par la tribu qui l'a envoye).
+      allow delete: if connecte()
+                    && resource.data.famille is string
+                    && estAdmin(resource.data.famille)
+                    && (famille(resource.data.famille).get('suppression', null) != null
+                        || (resource.data.get('envoyeA', 0) is int
+                            && resource.data.envoyeA > 0
+                            && resource.data.envoyeA < request.time.toMillis() - 31536000000));
+    }
+
+    // ---------- invitations ----------
+    // Le jeton fait 48 caracteres aleatoires : le connaitre vaut autorisation.
+    // On ne peut jamais LISTER les invitations, seulement en ouvrir une precise.
+
+    match /invitations/{jeton} {
+
+      // Un membre peut s'inviter LUI-MEME sur un autre appareil. C'est
+      // indispensable : sur iPhone, l'icone de l'ecran d'accueil est une
+      // application separee, avec sa propre memoire ; il lui faut donc sa
+      // propre invitation, et celle qui a servi dans le navigateur est
+      // deja consommee. Sans cela, il faudrait deranger un administrateur
+      // a chaque fois.
+      //
+      // Deux garde-fous : il ne peut viser QUE son propre profil (celui
+      // que le registre `appareils` associe a son appareil), et il ne peut
+      // jamais se donner les droits d'administrateur.
+      function sInviteSoiMeme() {
+        let d = request.resource.data;
+        return estMembre(d.famille)
+          && famille(d.famille).get('appareils', {}).get(request.auth.uid, '') == d.pour
+          && d.profilRole != 'admin';
+      }
+
+      // Une invitation qui A SERVI ne se relit plus que par l'appareil qui
+      // l'a reservee (14/09/2026). Elle transporte un prenom et l'empreinte
+      // du code a 4 chiffres du profil vise : quatre chiffres se retrouvent
+      // en quelques secondes a partir d'une empreinte. Tant qu'elle est
+      // libre, celui qui a le lien est justement celui qu'on invite ; une
+      // fois qu'elle a servi, plus personne d'autre n'a de raison de la lire
+      // — et un lien traine longtemps dans une conversation.
+      allow get: if connecte()
+                 && (resource.data.utilisee == false
+                     || resource.data.get('utiliseePar', '') == request.auth.uid);
+      // Retrouver les invitations d'UNE famille, pour les effacer (droit a
+      // l'effacement : elles contiennent un prenom et l'empreinte d'un code).
+      // Reserve a ses administrateurs, et la requete DOIT filtrer sur la
+      // famille — sans ce filtre, Firestore la refuse d'office.
+      allow list: if connecte() && estAdmin(resource.data.famille);
+      allow create: if connecte()
+                    && request.resource.data.utilisee == false
+                    && (estAdmin(request.resource.data.famille) || sInviteSoiMeme());
+      // RESERVER le jeton : une seule fois, et en signant.
+      //
+      // La condition « le jeton est encore libre » porte sur ce seul document.
+      // Firestore garantit qu'une seule des ecritures concurrentes passera :
+      // c'est ce qui ferme la course ou deux appareils entraient ensemble.
+      //
+      // Celui qui reserve doit inscrire SON identifiant. Il ne peut donc pas
+      // reserver un jeton au nom d'un autre, et surtout : c'est cette signature
+      // qui lui permettra d'entrer, et de RECOMMENCER si l'entree echoue.
+      //
+      // Note : n'importe qui connaissant le jeton peut le reserver. Ce n'est
+      // pas une perte — connaissant le jeton, il pouvait de toute facon s'en
+      // servir pour entrer.
+      allow update: if connecte()
+                    && resource.data.utilisee == false
+                    && request.resource.data.diff(resource.data)
+                         .affectedKeys().hasOnly(['utilisee', 'utiliseeLe', 'utiliseePar'])
+                    && request.resource.data.utilisee == true
+                    // La signature est obligatoire pour la nouvelle version.
+                    // L'ancienne ne l'ecrit pas : absente, on laisse passer,
+                    // sinon les familles pas encore mises a jour ne pourraient
+                    // plus consommer leurs invitations pendant la transition.
+                    && request.resource.data.get('utiliseePar', request.auth.uid)
+                         == request.auth.uid;
+      allow delete: if connecte() && estAdmin(resource.data.famille);
+    }
+
+    // ---------- la famille ----------
+
+    match /familles/{fid} {
+
+      function rubriquesLibres() {
+        // ce qu'un membre ordinaire a le droit de modifier
+        // « evenements » (18/10/2026) : chacun écrit son envie pour la liste au
+        // pere Noel, et ce n'est pas un droit d'administrateur. Meme regime que
+        // les courses et les rappels.
+        return request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly(['courses', 'listesCourses', 'stock', 'repas', 'notes', 'recettes',
+                    'echanges', 'evenements']);
+      }
+
+      // Un appareil invite s'inscrit lui-meme. A cet instant il n'a PAS encore
+      // le droit de lire la famille : il ne peut donc qu'AJOUTER (arrayUnion),
+      // jamais recopier ni ecraser ce qui existe.
+      function sInscritAvecInvitation() {
+        let jeton = request.resource.data.jetonUtilise;
+        let avant = resource.data;
+        let apres = request.resource.data;
+        // La fiche ajoutee par cette ecriture (au plus une), et le profil
+        // sous lequel cet appareil se range. Voir le correctif du 14/09/2026.
+        let ajoutes = apres.membres.removeAll(avant.membres);
+        let monProfil = apres.get('appareils', {}).get(request.auth.uid, '');
+        return sessionAppareil()
+          && apres.diff(avant).affectedKeys()
+               .hasOnly(['membres', 'membresUid', 'adminsUid', 'appareils', 'appareilsInfos', 'jetonUtilise'])
+          && invitationValide(fid, jeton)
+
+          // --- appareils autorises : les anciens PLUS le mien, rien d'autre ---
+          // Compter « +1 » ne suffisait pas : retirer un membre et en ajouter
+          // deux donne aussi +1. On exige donc que TOUS les anciens restent.
+          && !(request.auth.uid in avant.membresUid)
+          && request.auth.uid in apres.membresUid
+          && apres.membresUid.hasAll(avant.membresUid)
+          && apres.membresUid.size() == avant.membresUid.size() + 1
+
+          // --- les fiches des membres deja presents sont intouchables ---
+          // Rien ne les protegeait : on pouvait toutes les reecrire en entrant.
+          // Au plus UNE fiche peut s'ajouter (une nouvelle personne) ; rejoindre
+          // un profil existant n'en ajoute aucune.
+          && apres.membres.hasAll(avant.membres)
+          && ajoutes.size() == (invitation(jeton).pour == 'nouveau' ? 1 : 0)
+
+          // --- registre appareil -> profil : ma ligne, ET LA BONNE VALEUR ---
+          //
+          // FAILLE CORRIGEE LE 14/09/2026, prouvee sur l'emulateur AVANT
+          // correction (tests/attaque-invitation.test.js).
+          //
+          // La regle ne controlait que la CLE ecrite dans le registre
+          // (« je ne touche que ma ligne »), jamais sa VALEUR. N'importe
+          // quelle invitation ORDINAIRE permettait donc d'ecrire, dans le
+          // registre, « cet appareil appartient au profil de
+          // l'administratrice ». A partir de la, deux degats : revoquer
+          // DEFINITIVEMENT ses appareils (retireUnDeSesAppareils lit ce meme
+          // registre pour dire « c'est mon profil »), et heriter de ses
+          // droits au premier enregistrement qu'elle faisait
+          // (recalculerIndexSur deduit adminsUid du registre).
+          //
+          // Desormais le profil est IMPOSE par l'invitation : celui qu'elle
+          // designe, ou la fiche neuve creee dans la meme ecriture. Une fiche
+          // neuve ne peut etre ni administratrice, ni porteuse d'un champ
+          // uids — seconde porte prouvee elle aussi, car
+          // migrerUidsVersAppareils recopiait ensuite ce champ dans le
+          // registre.
+          && (invitation(jeton).pour == 'nouveau'
+                ? (monProfil == ajoutes[0].id
+                   && ajoutes[0].get('role', 'membre') != 'admin'
+                   && !('uids' in ajoutes[0]))
+                : monProfil == invitation(jeton).pour)
+          && apres.get('appareils', {}).diff(avant.get('appareils', {}))
+               .affectedKeys().hasOnly([request.auth.uid])
+          && apres.get('appareilsInfos', {}).diff(avant.get('appareilsInfos', {}))
+               .affectedKeys().hasOnly([request.auth.uid])
+
+          // --- droits d'administrateur ---
+          // Seule une invitation visant un profil administrateur les ouvre, et
+          // le seul appareil qui peut les recevoir est CELUI QUI ENTRE.
+          && (invitation(jeton).profilRole == 'admin'
+                ? (apres.adminsUid.hasAll(avant.adminsUid)
+                     && apres.adminsUid.size() == avant.adminsUid.size() + 1
+                     && request.auth.uid in apres.adminsUid)
+                : apres.adminsUid == avant.adminsUid);
+      }
+
+      // Un compte adulte (lien magique) rattache UN appareil a SON profil,
+      // dans SA famille. La requete vient de la session du COMPTE, qui n'est
+      // jamais membre : elle n'a pas lu la famille, elle ajoute seulement.
+      function rattacheParCompte() {
+        let adresse = request.auth.token.email.lower();
+        let c = get(/databases/$(database)/documents/comptes/$(adresse)).data;
+        let avant = resource.data;
+        let apres = request.resource.data;
+        let nouveaux = apres.membresUid.removeAll(avant.membresUid);
+        return c.famille == fid                                     // SA famille
+          && apres.diff(avant).affectedKeys()
+               .hasOnly(['appareils', 'appareilsInfos', 'membresUid', 'adminsUid'])
+          && apres.membresUid.hasAll(avant.membresUid)
+          && nouveaux.size() == 1
+          && !(request.auth.uid in apres.membresUid)                // le compte n'est jamais membre
+          && !(nouveaux[0] in avant.get('appareilsRevoques', {}))   // un revoque ne revient pas
+          && apres.get('appareils', {}).diff(avant.get('appareils', {}))
+               .affectedKeys().hasOnly(nouveaux)
+          && apres.get('appareils', {}).get(nouveaux[0], '') == c.membre
+          && apres.get('appareilsInfos', {}).diff(avant.get('appareilsInfos', {}))
+               .affectedKeys().hasOnly(nouveaux)
+          && (c.admin == true
+                ? (apres.adminsUid.hasAll(avant.adminsUid)
+                   && apres.adminsUid.size() == avant.adminsUid.size() + 1
+                   && nouveaux[0] in apres.adminsUid)
+                : apres.adminsUid == avant.adminsUid);
+      }
+
+      // Un membre retire UN des appareils de SON profil — même sans être
+      // administrateur : c'est le téléphone perdu d'un adulte, retiré depuis
+      // son nouveau téléphone (P7). Tout en une écriture : l'appareil sort du
+      // registre, de ses informations et des listes d'accès, et entre parmi
+      // les révoqués (I4). Jamais le dernier appareil administrateur.
+      function retireUnDeSesAppareils() {
+        let avant = resource.data;
+        let apres = request.resource.data;
+        let retires = avant.membresUid.removeAll(apres.membresUid);
+        let regAvant = avant.get('appareils', {});
+        let regApres = apres.get('appareils', {});
+        return sessionAppareil()
+          && estMembre(fid)
+          && apres.diff(avant).affectedKeys()
+               .hasOnly(['appareils', 'appareilsInfos', 'appareilsRevoques', 'membresUid', 'adminsUid'])
+          && avant.membresUid.hasAll(apres.membresUid)
+          && retires.size() == 1
+          && regAvant.get(retires[0], '') != ''
+          && regAvant.get(retires[0], '') == regAvant.get(request.auth.uid, '-')  // même profil que moi
+          && regApres.diff(regAvant).affectedKeys().hasOnly(retires)
+          && !(retires[0] in regApres)
+          && apres.get('appareilsInfos', {}).diff(avant.get('appareilsInfos', {}))
+               .affectedKeys().hasOnly(retires)
+          && apres.get('appareilsRevoques', {}).diff(avant.get('appareilsRevoques', {}))
+               .affectedKeys().hasOnly(retires)
+          && retires[0] in apres.get('appareilsRevoques', {})
+          && apres.adminsUid == avant.adminsUid.removeAll(retires)
+          && apres.adminsUid.size() > 0;
+      }
+
+      // Un membre note la DERNIÈRE OUVERTURE de la tribu (12/09/2026). C'est
+      // la seule chose qu'un appareil non administrateur écrit hors de ses
+      // rubriques : une date, et rien d'autre. Elle vient du serveur, donc
+      // elle ne peut pas être inventée. Elle sert au ménage : repérer dans la
+      // console les tribus qui ne servent plus.
+      function noteOuverture() {
+        return sessionAppareil()
+          && estMembre(fid)
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['vuLe'])
+          && request.resource.data.vuLe == request.time;
+      }
+
+      // Un membre modifie SA PROPRE fiche : son prénom, son avatar, son code à
+      // 4 chiffres (15/09/2026). Rien d'autre — ni son rôle, ni la fiche d'un
+      // autre, ni rien hors de la liste des membres. C'est ce qui permet à
+      // chacun de CHOISIR son code en arrivant (l'administratrice n'a plus à
+      // l'inventer), et à un membre ordinaire d'utiliser « Modifier mon
+      // profil », que le serveur refusait jusque-là. Le profil est celui que
+      // le registre associe à CET appareil : on ne peut pas viser celui d'un
+      // autre. Exactement UNE fiche remplacée, par la même, retouchée.
+      function modifieSaFiche() {
+        let avant = resource.data;
+        let apres = request.resource.data;
+        let monProfil = avant.get('appareils', {}).get(request.auth.uid, '');
+        let retiree = avant.get('membres', []).removeAll(apres.get('membres', []));
+        let ajoutee = apres.get('membres', []).removeAll(avant.get('membres', []));
+        return sessionAppareil()
+          && estMembre(fid)
+          && monProfil != ''
+          && apres.diff(avant).affectedKeys().hasOnly(['membres'])
+          && apres.membres.size() == avant.membres.size()
+          && retiree.size() == 1
+          && ajoutee.size() == 1
+          && retiree[0].get('id', '') == monProfil
+          && ajoutee[0].get('id', '') == monProfil
+          && ajoutee[0].diff(retiree[0]).affectedKeys()
+               .hasOnly(['prenom', 'emoji', 'pinHash', 'pinSel', 'pin'])
+          && ajoutee[0].get('pin', null) == null
+          && ajoutee[0].get('prenom', '') is string
+          && ajoutee[0].get('prenom', '').size() > 0
+          && ajoutee[0].get('prenom', '').size() <= 20;
+      }
+
+      // Garde commune à TOUTES les mises à jour : un appareil révoqué ne
+      // revient jamais dans les listes d'accès (I4) — ni par invitation, ni
+      // par lien e-mail, ni par l'écriture d'un téléphone resté en retard.
+      function aucunRevoqueRemis() {
+        return !request.resource.data.get('membresUid', [])
+                  .hasAny(request.resource.data.get('appareilsRevoques', {}).keys());
+      }
+
+      // « Revoque definitivement » doit l'etre COTE SERVEUR (audit du
+      // 13/09/2026) : la liste des revoques ne peut que grossir. Sans cela,
+      // un administrateur bidouille retirait l'entree puis remettait
+      // l'appareil dans membresUid, en deux ecritures.
+      function revoquesMonotones() {
+        return request.resource.data.get('appareilsRevoques', {}).keys()
+                 .hasAll(resource.data.get('appareilsRevoques', {}).keys());
+      }
+
+      // Et un administrateur est toujours un membre autorise : adminsUid est
+      // inclus dans membresUid, donc jamais un appareil revoque.
+      function adminsDansMembres() {
+        return request.resource.data.get('membresUid', [])
+                 .hasAll(request.resource.data.get('adminsUid', []));
+      }
+
+      // Garde commune elle aussi : une tribu qui avait un appareil
+      // administrateur en garde toujours au moins un. Sinon plus personne ne
+      // pourrait la gérer — pas même en retirant son propre appareil.
+      function resteUnAdmin() {
+        return resource.data.get('adminsUid', []).size() == 0
+          || request.resource.data.get('adminsUid', []).size() > 0;
+      }
+
+      allow get: if estMembre(fid);
+      allow list: if false;
+
+      // On cree sa propre famille : il faut s'y inscrire soi-meme comme admin.
+      // Le repere est TIRE AU SORT, jamais choisi : il sert d'identifiant au
+      // document et circule (annuaire des reperes, catalogue de recettes).
+      // Un vrai nom de famille y deviendrait lisible et testable par
+      // n'importe quel utilisateur, et definitif. Meme alphabet que
+      // l'application (LETTRES_CODE : ni I, ni O, ni 0, ni 1).
+      // Les familles creees avant cette regle gardent leur repere.
+      //
+      // EN ATTENTE : la 0.48, encore en production, laisse saisir le repere
+      // librement. Tant que ses telephones creent des familles, cette
+      // verification refuserait toute famille dont le repere a ete retape a la
+      // main. A REACTIVER quand la 0.50 sera en production partout
+      // (MODELE-COMPTES-APPAREILS.md, section 7). L'application 0.50 impose
+      // deja le format de son cote.
+      // Creation BORNEE (audit du 13/09/2026) : la tribu nait avec UN seul
+      // appareil (le createur, membre et administrateur), au plus un profil,
+      // aucun revoque, aucun drapeau, aucune place fondatrice. Un client
+      // modifie ne peut donc pas naitre avec dix administrateurs ou des
+      // centaines de membres fictifs. Les 0.48 et 0.50 creent exactement
+      // ainsi. Le contenu (taches, recettes…) reste libre, mais borne.
+      allow create: if sessionAppareil()
+                    // && fid.matches('^MAISON-[A-HJ-NP-Z2-9]{6}$')
+                    && request.resource.data.membresUid == [request.auth.uid]
+                    && request.resource.data.adminsUid == [request.auth.uid]
+                    && request.resource.data.get('appareils', {}).keys().hasOnly([request.auth.uid])
+                    && request.resource.data.get('membres', []).size() <= 1
+                    && request.resource.data.get('appareilsRevoques', {}).size() == 0
+                    && request.resource.data.get('suppression', null) == null
+                    && request.resource.data.get('fondatrice', null) == null
+                    && request.resource.data.get('recettes', []).size() <= 2000
+                    && request.resource.data.get('taches', []).size() <= 200
+                    && request.resource.data.get('cadeaux', []).size() <= 200;
+
+      // Le drapeau de suppression. Une fois pose, PERSONNE ne peut plus le
+      // retirer ni le modifier : c'est lui, et lui seul, qui ouvre l'effacement
+      // du journal et des etats. Sans lui ces deux registres restent
+      // inalterables, exactement comme avant. Et il ne peut pas servir a
+      // effacer quelques lignes du journal puis refermer discretement la porte.
+      function suppressionIntacte() {
+        return resource.data.get('suppression', null) == null
+          || request.resource.data.get('suppression', null) == resource.data.suppression;
+      }
+
+      allow update: if aucunRevoqueRemis() && revoquesMonotones() && adminsDansMembres()
+                    && resteUnAdmin() && (
+                       (estAdmin(fid) && suppressionIntacte())
+                    || (estMembre(fid) && rubriquesLibres())
+                    || noteOuverture()
+                    || modifieSaFiche()
+                    || sInscritAvecInvitation()
+                    || retireUnDeSesAppareils()
+                    // En dernier : la preuve de l'adresse est verifiee AVANT
+                    // de lire la fiche compte (une session anonyme n'a pas
+                    // d'adresse, elle s'arrete la).
+                    || (adresseProuvee(request.auth.token.get('email', '').lower())
+                        && rattacheParCompte()));
+
+      // Droit a l'effacement : un administrateur, et seulement une fois le
+      // drapeau pose. Les sous-collections doivent etre videes AVANT —
+      // Firestore ne les efface pas avec leur parent.
+      allow delete: if estAdmin(fid) && resource.data.get('suppression', null) != null;
+
+      // ---------- etat des taches (fait / valide) ----------
+      // Un membre peut dire "c'est fait". Seul un administrateur valide.
+
+      match /etats/{cle} {
+        allow read: if estMembre(fid);
+
+        // Un membre dit « c'est fait », il ne valide pas — et il n'ecrit que
+        // les champs prevus. Avant, le statut etait verifie mais le reste du
+        // document restait libre : on pouvait y glisser n'importe quoi, dont
+        // une fausse trace de validation.
+        allow create, update: if estAdmin(fid)
+                              || (estMembre(fid)
+                                  && request.resource.data.statut in ['afaire', 'fait']
+                                  && request.resource.data.keys().hasOnly(
+                                       ['statut', 'parQui', 'faitLe',
+                                        'valideLe', 'valideePar'])
+                                  && request.resource.data.get('valideLe', null) == null
+                                  && request.resource.data.get('valideePar', null) == null);
+        // Seulement pendant la suppression complete de la famille.
+        allow delete: if estAdmin(fid) && famille(fid).get('suppression', null) != null;
+      }
+
+      // ---------- le mot du jour (0.60, 19/09/2026) ----------
+      /* Un document par membre (son identifiant), avec SA partie du jour et
+         celle de la veille, dont la serie de la tribu a besoin. Jamais les
+         lettres tapees : seulement les couleurs (v bien placee, o ailleurs,
+         g absente), pour que personne ne puisse lire le mot d'un autre. Deux
+         jours au plus : rien ne s'accumule.
+         N'importe quel appareil de la famille peut ecrire la partie de
+         n'importe quel membre : un enfant joue souvent sur la tablette d'un
+         parent, et l'enjeu est nul (aucun point). En echange, le document
+         est verifie champ par champ : il ne peut rien porter d'autre. */
+      function partieMotConforme(p) {
+        return p.jour is string
+          && p.jour.matches('^20[0-9]{2}-[01][0-9]-[0-3][0-9]$')
+          && p.grille is string
+          && p.grille.matches('^([vog]{5}(,[vog]{5}){0,5})?$')
+          && p.fini is bool
+          && p.aide is int && p.aide >= 0 && p.aide <= 2
+          && p.serie is int && p.serie >= 0 && p.serie <= 100000;
+      }
+      function veilleMotConforme(v) {
+        return v == null
+          || (v is map
+              && v.keys().hasOnly(['jour', 'grille', 'fini', 'aide', 'serie'])
+              && v.keys().hasAll(['jour', 'grille', 'fini', 'aide', 'serie'])
+              && partieMotConforme(v));
+      }
+      match /motsDuJour/{membreId} {
+        allow read: if estMembre(fid);
+        allow create, update: if estMembre(fid) && sessionAppareil()
+                              && famille(fid).get('suppression', null) == null
+                              && membreId.matches('^[A-Za-z0-9_-]{1,40}$')
+                              && request.resource.data.keys().hasOnly(
+                                   ['jour', 'grille', 'fini', 'aide', 'serie', 'veille'])
+                              && request.resource.data.keys().hasAll(
+                                   ['jour', 'grille', 'fini', 'aide', 'serie', 'veille'])
+                              && partieMotConforme(request.resource.data)
+                              && veilleMotConforme(request.resource.data.veille);
+        // Seulement pendant la suppression complete de la famille.
+        allow delete: if estAdmin(fid) && famille(fid).get('suppression', null) != null;
+      }
+
+      // ---------- rubriques volumineuses (recettes) ----------
+      /* Les recettes pesaient 350 Ko des 354 Ko du document de la famille. Or
+         Firestore renvoie le document ENTIER a tous les appareils a la
+         moindre modification : cocher un article de courses reexpediait donc
+         les 398 recettes a chacun. Elles vivent maintenant ici.
+
+         Memes droits qu'avant leur demenagement : elles faisaient partie des
+         rubriques qu'un MEMBRE ordinaire peut modifier (rubriquesLibres),
+         cela ne change pas. Seul le rangement change, pas les droits.
+
+         Le nom de la rubrique est borne : cette sous-collection n'est pas un
+         debarras ou l'on pourrait deposer n'importe quoi. */
+      match /rubriques/{nom} {
+        allow read: if estMembre(fid);
+        allow create, update: if estMembre(fid)
+                              && nom == 'recettes'
+                              && request.resource.data.keys().hasOnly(['liste'])
+                              && request.resource.data.liste is list
+                              && request.resource.data.liste.size() <= 2000;
+        // Efface avec la famille, et seulement pendant sa suppression.
+        allow delete: if estAdmin(fid) && famille(fid).get('suppression', null) != null;
+      }
+
+      // ---------- journal des points ----------
+      // Ecriture unique, jamais de modification, montant verifie ici.
+
+      match /journal/{ligne} {
+
+        function montantJuste() {
+          let e = request.resource.data;
+          return e.delta is int
+            && (
+                 // points d'une tache : le montant doit etre celui du bareme,
+                 // et la tache doit avoir ete reellement validee.
+                 (e.type == 'tache'
+                   && famille(fid).bareme[e.refId] == e.delta
+                   && exists(/databases/$(database)/documents/familles/$(fid)/etats/$(e.cleEtat))
+                   && get(/databases/$(database)/documents/familles/$(fid)/etats/$(e.cleEtat))
+                        .data.statut == 'valide')
+
+                 // points d'un repas cuisine : meme principe que la tache,
+                 // le montant vient du reglage de la famille (ecrit par un
+                 // administrateur seulement) et le repas doit etre valide.
+                 || (e.type == 'repas'
+                   && famille(fid).reglages.pointsRepas == e.delta
+                   && exists(/databases/$(database)/documents/familles/$(fid)/etats/$(e.cleEtat))
+                   && get(/databases/$(database)/documents/familles/$(fid)/etats/$(e.cleEtat))
+                        .data.statut == 'valide')
+
+                 // achat d'un cadeau : retrait exact du prix affiche
+                 || (e.type == 'cadeau'
+                      && famille(fid).tarifs[e.refId] == -e.delta)
+
+                 // ajustement manuel d'un administrateur, borne
+                 || (e.type == 'ajustement'
+                      && e.delta >= -1000 && e.delta <= 1000)
+               );
+        }
+
+        allow read: if estMembre(fid);
+        allow create: if estAdmin(fid) && montantJuste();
+        allow update: if false;
+        // Toujours inalterable... sauf pendant la suppression complete de la
+        // famille, drapeau pose. Voir suppressionIntacte() plus haut.
+        allow delete: if estAdmin(fid) && famille(fid).get('suppression', null) != null;
+      }
+    }
+  }
+}
